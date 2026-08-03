@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before reporting an issue, please review the [README](https://github.com/Lewa-Reka/esphome-opendtu-to-sdm630/blob/main/README.md) - especially **Requirements**, **Configuration reference**, and **Failsafe behaviour**.
+        Before reporting an issue, please review the [README](https://github.com/withoutspam/esphome-opendtu-to-sdm630/blob/main/README.md) - especially **Requirements**, **Configuration reference**, and **Failsafe behaviour**.
 
         **Scope of this repository:** the `opendtu_meter_bridge` ESPHome component only (WebSocket livedata → selectable SDM630/DTSU666 Modbus profile).
 

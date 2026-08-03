@@ -1,5 +1,6 @@
 external_components:
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  # Use @v0.2.0 for a reproducible release build; @main follows the newest fixes.
+  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
     components: [opendtu_meter_bridge]
 
 opendtu_meter_bridge:

@@ -17,9 +17,9 @@ limitations under the License.
 -->
 
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lewa-Reka/esphome-opendtu-to-sdm630/build-ci.yaml?style=for-the-badge)
-![GitHub License](https://img.shields.io/github/license/Lewa-Reka/esphome-opendtu-to-sdm630?style=for-the-badge)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/y/Lewa-Reka/esphome-opendtu-to-sdm630?style=for-the-badge)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/withoutspam/esphome-opendtu-to-sdm630/build-ci.yaml?style=for-the-badge)
+![GitHub License](https://img.shields.io/github/license/withoutspam/esphome-opendtu-to-sdm630?style=for-the-badge)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/y/withoutspam/esphome-opendtu-to-sdm630?style=for-the-badge)
 
 ESPHome external component that reads Hoymiles microinverter data from [OpenDTU](https://github.com/tbnobody/OpenDTU) and presents instantaneous measurements to a hybrid inverter using a Modbus RTU **Eastron SDM630** or **CHINT DTSU666** register profile.
 
@@ -70,7 +70,7 @@ Each microinverter (**MI**) only needs radio reach to **OpenDTU**. The bridge su
 
 - Parses OpenDTU livedata JSON (`inverters[].AC["0"]` → voltage, current, power, frequency)
 - Maps microinverters to grid phases via `microinverter_map` (several inverters can share a phase, current and power are summed)
-- Inverts current and power sign (OpenDTU reports positive generation, the emulated meters present export as negative values)
+- Inverts the OpenDTU generation sign for directional values: active power is negative for export in both profiles, SDM630 retains directional current for compatibility, and DTSU666 exposes positive RMS current as required by its register map
 - Serves the selected meter register window on `slave_address` (`0x02` for Deye Grid Tie Meter 2), silently ignoring Deye queries to `0x01` (main meter address)
 
 ## Requirements
@@ -205,7 +205,16 @@ When the WebSocket disconnects, JSON parsing fails, or no fresh data arrives wit
 
 ### Modbus registers
 
-Active input registers (FP32, high word first). All other addresses return `0.0`.
+The bridge accepts Modbus **FC03 (Read Holding Registers)** and **FC04 (Read Input Registers)** requests. The physical DTSU666 specification defines FC03; FC04 is also accepted by the bridge for compatibility with masters that treat meter measurements as input registers. Write functions are not implemented.
+
+Measurements use IEEE-754 FP32 values in two consecutive 16-bit registers, with the high word first and big-endian bytes (`ABCD`). Each profile exposes one contiguous read window:
+
+- SDM630: `0x0000` through `0x017F` (`0x0180` registers)
+- DTSU666: `0x2000` through `0x2045` (`0x0046` registers)
+
+Addresses inside the selected profile window that are not listed below return zero-filled registers. A request outside the selected window or one that crosses its end is rejected with Modbus exception **`0x02` (Illegal Data Address)**. A zero-length request or one exceeding 125 registers is rejected with **`0x03` (Illegal Data Value)**.
+
+Read requests are limited to the Modbus maximum of 125 registers. Active power keeps its direction: OpenDTU generation/export is exposed as a negative value. DTSU666 current registers expose the positive RMS magnitude defined by the CHINT map, while the SDM630 profile retains the legacy directional-current behavior for compatibility.
 
 #### Eastron SDM630 (`meter_profile: sdm630`)
 
@@ -271,7 +280,7 @@ The reference file pulls the component from GitHub:
 
 ```yaml
 external_components:
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
     components: [opendtu_meter_bridge]
 ```
 
@@ -279,28 +288,53 @@ It also includes WiFi, OTA, API, UART (TX=17, RX=16, 9600 baud), Modbus server, 
 
 ## Migration from `opendtu_sdm630`
 
-Version 0.2.0 uses a meter-neutral component name. Update existing configurations as follows:
+Version 0.2.0 introduces the recommended meter-neutral `opendtu_meter_bridge` name. Existing v0.0.1 configurations remain compatible through the `opendtu_sdm630` wrapper: after changing the source to this fork, they compile without changing the component list or YAML domain, emit a deprecation warning, and select SDM630 by default.
 
 ```yaml
-# Before
+# Compatible v0.0.1 configuration on the 0.2.x fork
 external_components:
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
     components: [opendtu_sdm630]
 
 opendtu_sdm630:
-  meter_type: dtsu666
+  host: 192.168.1.50
+  password: !secret opendtu_password
+  modbus_id: modbus_1
+  microinverter_map:
+    - name: Garage-HMS-2000-4T
+      grid_phase: 1
+  # No selector is needed: the compatibility wrapper defaults to SDM630.
+```
 
-# Version 0.2.0+
+The recommended 0.2.x configuration uses the neutral component name and an explicit profile when needed:
+
+```yaml
 external_components:
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
     components: [opendtu_meter_bridge]
 
 opendtu_meter_bridge:
+  host: 192.168.1.50
+  password: !secret opendtu_password
+  modbus_id: modbus_1
   # Allowed values: sdm630 or dtsu666.
   meter_profile: dtsu666
+  microinverter_map:
+    - name: Garage-HMS-2000-4T
+      grid_phase: 1
 ```
 
-The legacy `meter_type` option is temporarily accepted inside the new `opendtu_meter_bridge:` block, but it emits a deprecation warning. The old `opendtu_sdm630:` component name is not retained.
+The neutral domain supports both `meter_profile: sdm630` and `meter_profile: dtsu666`. The deprecated `meter_type` spelling is also accepted with the same two values and emits a warning; use `meter_profile` in every new configuration.
+
+Compatibility policy: both deprecated aliases -- the `opendtu_sdm630` component/domain and the `meter_type` option -- remain supported throughout the complete 0.2.x release series. They may be removed no earlier than v0.3.0, with the removal announced in the changelog and release notes.
+
+## Versioning and release guidance
+
+- The fork's `main` branch contains the current development line and can move as fixes are added.
+- Version `v0.2.0` is the reviewed release that introduces the neutral component name, compatibility wrapper, and DTSU666 profile.
+- Production installations should use `github://withoutspam/esphome-opendtu-to-sdm630@v0.2.0` for a reproducible build.
+- Use `@main` only when you deliberately want the newest fixes, or pin a reviewed commit SHA when testing a specific development revision.
+- Compatibility changes, deprecations, and release contents are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 For local component development, point `external_components` to a local path instead:
 
@@ -311,6 +345,19 @@ external_components:
       path: components
     components: [opendtu_meter_bridge]
 ```
+
+## Adding another meter profile
+
+Meter-specific register encoding is intentionally separated from OpenDTU collection and Modbus transport. To add a profile:
+
+1. Add its public YAML value to `METER_PROFILES` in `components/opendtu_meter_bridge/__init__.py` and its C++ enum value to `meter_profile.h`.
+2. Add the profile name, register-window start/count, and encoder dispatch in `meter_profile.cpp`.
+3. Implement the register descriptor table in `meter_profile_<name>.cpp` and encode it through the shared `meter_profile_codec`. Add a `MeasurementSource` to `meter_profile_codec.h/.cpp` only when the profile needs a measurement transformation that the codec does not already provide. Do not duplicate FP32 byte-order, bounds-checking, RMS-current, or line-voltage logic in an individual profile.
+4. If its register window is larger than the current shared capacity, update `METER_PROFILE_REGISTER_CAPACITY` in `meter_profile.h`.
+5. Add a golden-vector case to `tests/meter_profile_test.cpp`, including exact register words and relevant boundary/window checks. Add a local ESPHome configuration, include it in the CI matrix, and document the register map and source specification.
+6. Update every user-facing selector comment so it lists all supported values, including the reference YAML, README examples, and issue form.
+
+Keep the profile implementation independent of WebSocket parsing and Modbus request handling. A new profile should only translate the normalized measurements into its documented register layout.
 
 ## Installation
 
@@ -344,6 +391,10 @@ esphome logs opendtu_meter_bridge.yaml
 ```
 
 OTA updates work through the ESPHome dashboard or `esphome upload` over the network after the first flash.
+
+## Upstream and attribution
+
+This fork is based on [Lewa-Reka/esphome-opendtu-to-sdm630](https://github.com/Lewa-Reka/esphome-opendtu-to-sdm630). The original project attribution and Apache-2.0 copyright notice are retained. The fork adds the neutral meter-bridge architecture and selectable SDM630/DTSU666 profiles.
 
 ## License
 

@@ -5,7 +5,15 @@ from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, button, esp32, modbus, sensor, text_sensor, wifi
+from esphome.components import (
+    binary_sensor,
+    button,
+    esp32,
+    modbus,
+    sensor,
+    text_sensor,
+    wifi,
+)
 from esphome.components.modbus import CONF_MODBUS_ID
 from esphome.const import (
     CONF_ID,
@@ -26,14 +34,19 @@ from esphome.const import (
     UNIT_VOLT,
     UNIT_WATT,
 )
+
+# ESPHome 2026.7 introduced the ModbusServer codegen type.  Earlier supported
+# versions expose the same server configuration through Modbus.
+MODBUS_SERVER_CLASS = getattr(modbus, "ModbusServer", modbus.Modbus)
 from esphome.yaml_util import load_yaml
 
 _IDF_COMPONENTS_YML = Path(__file__).with_name("idf_component.yml")
 
-CODEOWNERS = ["@Lewa-Reka"]
+CODEOWNERS = ["@withoutspam", "@Lewa-Reka"]
 
 AUTO_LOAD = ["binary_sensor", "button", "modbus", "sensor", "text_sensor"]
 DEPENDENCIES = ["wifi"]
+CONFLICTS_WITH = ["opendtu_sdm630"]
 
 COMPONENT_VERSION = "0.2.0"
 
@@ -84,6 +97,9 @@ METER_PROFILES = {
 }
 
 _LOGGER = logging.getLogger(__name__)
+_PASSWORD_SCHEMA = (
+    cv.sensitive(cv.string) if hasattr(cv, "sensitive") else cv.string
+)
 MICROINVERTER_MAP_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -195,6 +211,12 @@ def _ensure_default_entities(config):
     return config
 
 
+def _set_default_meter_profile(config):
+    if CONF_METER_PROFILE not in config and CONF_METER_TYPE not in config:
+        config[CONF_METER_PROFILE] = "sdm630"
+    return config
+
+
 def _normalize_meter_profile(config):
     if CONF_METER_TYPE in config:
         _LOGGER.warning(
@@ -202,12 +224,11 @@ def _normalize_meter_profile(config):
             "(allowed values: sdm630, dtsu666)."
         )
         config[CONF_METER_PROFILE] = config.pop(CONF_METER_TYPE)
-    elif CONF_METER_PROFILE not in config:
-        config[CONF_METER_PROFILE] = MeterProfile.SDM630
     return config
 
 
 CONFIG_SCHEMA = cv.All(
+    _set_default_meter_profile,
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(OpenDtuMeterBridge),
@@ -215,9 +236,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PORT, default=80): cv.port,
             cv.Optional(CONF_PATH, default="/livedata"): cv.string,
             cv.Optional(CONF_USERNAME, default="admin"): cv.string,
-            cv.Required(CONF_PASSWORD): cv.string,
-            cv.Required(CONF_MODBUS_ID): cv.use_id(modbus.ModbusServer),
-            cv.Optional(CONF_SLAVE_ADDRESS, default=0x02): cv.hex_uint8_t,
+            cv.Required(CONF_PASSWORD): _PASSWORD_SCHEMA,
+            cv.Required(CONF_MODBUS_ID): cv.use_id(MODBUS_SERVER_CLASS),
+            cv.Optional(CONF_SLAVE_ADDRESS, default=0x02): cv.All(
+                cv.hex_uint8_t, cv.int_range(min=1, max=247)
+            ),
             cv.Exclusive(CONF_METER_PROFILE, "meter_profile_option"): cv.enum(
                 METER_PROFILES, lower=True
             ),
@@ -275,6 +298,9 @@ def _register_idf_components():
 
 
 async def to_code(config):
+    if hasattr(wifi, "request_wifi_connect_state_listener"):
+        wifi.request_wifi_connect_state_listener()
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
@@ -325,5 +351,4 @@ async def to_code(config):
         version_ts = await text_sensor.new_text_sensor(config[CONF_COMPONENT_VERSION])
         cg.add(var.set_component_version_text_sensor(version_ts))
 
-    wifi.request_wifi_connect_state_listener()
     _register_idf_components()

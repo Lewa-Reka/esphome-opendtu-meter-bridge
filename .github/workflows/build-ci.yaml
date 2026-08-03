@@ -13,6 +13,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  protocol-tests:
+    name: Meter profile protocol tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Build meter profile tests
+        run: >-
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic
+          -fsanitize=address,undefined -fno-omit-frame-pointer -I.
+          tests/meter_profile_test.cpp
+          components/opendtu_meter_bridge/meter_profile.cpp
+          components/opendtu_meter_bridge/meter_profile_codec.cpp
+          components/opendtu_meter_bridge/meter_profile_sdm630.cpp
+          components/opendtu_meter_bridge/meter_profile_dtsu666.cpp
+          -o "${RUNNER_TEMP}/meter-profile-tests"
+
+      - name: Run meter profile tests
+        run: "${RUNNER_TEMP}/meter-profile-tests"
+
+  configuration-tests:
+    name: Configuration validation / ${{ matrix.esphome-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        esphome-version:
+          - stable
+          - 2026.7.3
+          - 2025.6.3
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ESPHome ${{ matrix.esphome-version }}
+        env:
+          ESPHOME_VERSION: ${{ matrix.esphome-version }}
+        run: |
+          if [ "${ESPHOME_VERSION}" = "stable" ]; then
+            python -m pip install esphome
+          else
+            python -m pip install "esphome==${ESPHOME_VERSION}"
+          fi
+
+      - name: Create secrets.yaml
+        run: cp secrets.yaml.example tests/secrets.yaml
+
+      - name: Validate the default profile
+        run: esphome -q config tests/meter_bridge_default_ci.yaml >/dev/null
+
+      - name: Validate the deprecated meter_type option
+        run: esphome -q config tests/meter_bridge_legacy_option_ci.yaml >/dev/null
+
+      - name: Reject conflicting profile selectors
+        run: |
+          if esphome -q config tests/meter_bridge_conflicting_options_invalid.yaml >/dev/null; then
+            echo "Expected conflicting meter selectors to fail validation" >&2
+            exit 1
+          fi
+
+      - name: Reject conflicting component domains
+        run: |
+          if esphome -q config tests/meter_bridge_conflicting_domains_invalid.yaml >/dev/null; then
+            echo "Expected the neutral and legacy component domains to conflict" >&2
+            exit 1
+          fi
+
   build-ci:
     name: Building ${{ matrix.config }} / ${{ matrix.esphome-version }}
     runs-on: ubuntu-latest
@@ -21,10 +94,12 @@ jobs:
       matrix:
         esphome-version:
           - stable
+          - 2026.7.3
           - 2025.6.3
         config:
           - meter_bridge_sdm630_ci.yaml
           - meter_bridge_dtsu666_ci.yaml
+          - opendtu_sdm630_legacy_ci.yaml
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4

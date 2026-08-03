@@ -50,6 +50,18 @@ struct PhaseData {
   bool has_data{false};
 };
 
+enum class WebSocketEventType : uint8_t {
+  CONNECTED,
+  DISCONNECTED,
+  ERROR,
+  DATA,
+};
+
+struct PendingWebSocketEvent {
+  WebSocketEventType type;
+  std::string payload;
+};
+
 class OpenDtuMeterBridge;
 
 class MeterBridgeModbusServer
@@ -82,9 +94,8 @@ class ModbusSilenceDevice : public modbus::ModbusDevice {
 #endif
 
 class OpenDtuMeterBridge : public Component
-#ifdef USE_WIFI_LISTENERS
-    ,
-                      public wifi::WiFiConnectStateListener
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
+                           , public wifi::WiFiConnectStateListener
 #endif
 {
  public:
@@ -112,7 +123,7 @@ class OpenDtuMeterBridge : public Component
   float get_total_power();
   float get_frequency();
   bool is_data_valid();
-  bool is_websocket_connected() const { return this->ws_connected_; }
+  bool is_websocket_connected();
   bool read_modbus_registers(uint16_t start_address, uint16_t number_of_registers,
                              std::vector<uint8_t> &response);
 
@@ -148,8 +159,8 @@ class OpenDtuMeterBridge : public Component
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
-#ifdef USE_WIFI_LISTENERS
-  void on_wifi_connect_state(const std::string &ssid, const wifi::bssid_t &bssid) override;
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
+  void on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6>) override;
 #endif
 
  protected:
@@ -159,8 +170,8 @@ class OpenDtuMeterBridge : public Component
   float modbus_frequency(float measured, bool has_frequency_data);
 
   void mark_data_stale_and_reset_();
-  void clear_phase_measurements_();
   void sync_modbus_registers_();
+  void sync_modbus_registers_locked_();
   void write_modbus_defaults_();
   void process_livedata_(const char *json, size_t len);
   void publish_state_();
@@ -168,6 +179,8 @@ class OpenDtuMeterBridge : public Component
   int find_inverter_index_(const cJSON *inverters, const MicroinverterMapEntry &entry);
 
   bool ws_buf_ensure_(size_t needed);
+  void queue_websocket_event_(WebSocketEventType type, std::string payload = {});
+  void process_pending_websocket_events_();
   void start_websocket_();
   void stop_websocket_();
   static void websocket_event_handler_(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data);
@@ -189,14 +202,18 @@ class OpenDtuMeterBridge : public Component
   bool has_frequency_data_{false};
   uint16_t modbus_regs_[METER_PROFILE_REGISTER_CAPACITY]{};
   SemaphoreHandle_t data_mutex_{nullptr};
+  SemaphoreHandle_t websocket_event_mutex_{nullptr};
 
   char *ws_buf_{nullptr};
   size_t ws_cap_{0};
+  std::string ws_uri_;
+  std::string ws_auth_header_;
+  std::vector<PendingWebSocketEvent> pending_websocket_events_;
   esp_websocket_client_handle_t ws_client_{nullptr};
   bool ws_started_{false};
   bool ws_connected_{false};
-  volatile int64_t last_data_us_{0};
-  volatile bool data_stale_{true};
+  int64_t last_data_us_{0};
+  bool data_stale_{true};
 
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 6, 0)
   modbus::ModbusServerHub *modbus_parent_{nullptr};

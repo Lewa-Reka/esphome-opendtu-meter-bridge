@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 #include "esp_timer.h"
 #include "mbedtls/base64.h"
@@ -18,6 +19,8 @@ namespace esphome::opendtu_meter_bridge {
 static const char *const TAG = "opendtu_meter_bridge";
 
 static constexpr uint8_t DEYE_MAIN_METER_ADDRESS = 0x01;
+static constexpr uint16_t MAX_MODBUS_READ_REGISTERS = 125;
+static constexpr size_t MAX_PENDING_WEBSOCKET_EVENTS = 8;
 
 static constexpr float VOLTAGE_MIN_V = 100.0f;
 static constexpr float VOLTAGE_MAX_V = 300.0f;
@@ -63,16 +66,6 @@ float OpenDtuMeterBridge::modbus_frequency(float measured, bool has_frequency_da
   return measured;
 }
 
-void OpenDtuMeterBridge::clear_phase_measurements_() {
-  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
-  for (auto &phase : this->phase_) {
-    phase = PhaseData{};
-  }
-  this->measured_frequency_ = 0.0f;
-  this->has_frequency_data_ = false;
-  xSemaphoreGive(this->data_mutex_);
-}
-
 void OpenDtuMeterBridge::write_modbus_defaults_() {
   MeterMeasurements measurements;
   measurements.voltage[1] = this->default_voltage_;
@@ -82,8 +75,7 @@ void OpenDtuMeterBridge::write_modbus_defaults_() {
   encode_meter_profile(this->meter_profile_, measurements, this->modbus_regs_, METER_PROFILE_REGISTER_CAPACITY);
 }
 
-void OpenDtuMeterBridge::sync_modbus_registers_() {
-  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+void OpenDtuMeterBridge::sync_modbus_registers_locked_() {
   if (this->data_stale_) {
     this->write_modbus_defaults_();
   } else {
@@ -101,6 +93,11 @@ void OpenDtuMeterBridge::sync_modbus_registers_() {
     measurements.frequency = this->modbus_frequency(this->measured_frequency_, this->has_frequency_data_);
     encode_meter_profile(this->meter_profile_, measurements, this->modbus_regs_, METER_PROFILE_REGISTER_CAPACITY);
   }
+}
+
+void OpenDtuMeterBridge::sync_modbus_registers_() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  this->sync_modbus_registers_locked_();
   xSemaphoreGive(this->data_mutex_);
 }
 
@@ -109,7 +106,8 @@ bool OpenDtuMeterBridge::read_modbus_registers(uint16_t start_address, uint16_t 
   const uint32_t window_start = meter_profile_register_start(this->meter_profile_);
   const uint32_t window_end = window_start + meter_profile_register_count(this->meter_profile_);
   const uint32_t request_end = (uint32_t) start_address + number_of_registers;
-  if (number_of_registers == 0 || start_address < window_start || request_end > window_end) {
+  if (number_of_registers == 0 || number_of_registers > MAX_MODBUS_READ_REGISTERS ||
+      start_address < window_start || request_end > window_end) {
     return false;
   }
 
@@ -127,9 +125,15 @@ bool OpenDtuMeterBridge::read_modbus_registers(uint16_t start_address, uint16_t 
 }
 
 void OpenDtuMeterBridge::mark_data_stale_and_reset_() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
   this->data_stale_ = true;
-  this->clear_phase_measurements_();
-  this->sync_modbus_registers_();
+  for (auto &phase : this->phase_) {
+    phase = PhaseData{};
+  }
+  this->measured_frequency_ = 0.0f;
+  this->has_frequency_data_ = false;
+  this->sync_modbus_registers_locked_();
+  xSemaphoreGive(this->data_mutex_);
   this->publish_state_();
 }
 
@@ -297,6 +301,9 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
     this->measured_frequency_ = 0.0f;
     this->has_frequency_data_ = false;
   }
+  this->last_data_us_ = esp_timer_get_time();
+  this->data_stale_ = false;
+  this->sync_modbus_registers_locked_();
   xSemaphoreGive(this->data_mutex_);
 
   cJSON_Delete(root);
@@ -318,9 +325,6 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
   ESP_LOGI(TAG, "Total Power: %.1f W", total);
   ESP_LOGI(TAG, "Frequency: %.2f Hz", this->get_frequency());
 
-  this->last_data_us_ = esp_timer_get_time();
-  this->data_stale_ = false;
-  this->sync_modbus_registers_();
   this->publish_state_();
 }
 
@@ -342,8 +346,79 @@ bool OpenDtuMeterBridge::ws_buf_ensure_(size_t needed) {
   return true;
 }
 
+void OpenDtuMeterBridge::queue_websocket_event_(WebSocketEventType type, std::string payload) {
+  if (this->websocket_event_mutex_ == nullptr) {
+    return;
+  }
+  xSemaphoreTake(this->websocket_event_mutex_, portMAX_DELAY);
+
+  // Livedata frames can arrive faster than ESPHome's main loop during a long
+  // blocking operation. Only the newest consecutive frame is useful.
+  if (type == WebSocketEventType::DATA && !this->pending_websocket_events_.empty() &&
+      this->pending_websocket_events_.back().type == WebSocketEventType::DATA) {
+    this->pending_websocket_events_.back().payload = std::move(payload);
+    xSemaphoreGive(this->websocket_event_mutex_);
+    return;
+  }
+
+  if (this->pending_websocket_events_.size() >= MAX_PENDING_WEBSOCKET_EVENTS) {
+    auto drop = this->pending_websocket_events_.begin();
+    for (auto event = this->pending_websocket_events_.begin(); event != this->pending_websocket_events_.end();
+         ++event) {
+      if (event->type == WebSocketEventType::DATA) {
+        drop = event;
+        break;
+      }
+    }
+    this->pending_websocket_events_.erase(drop);
+  }
+
+  this->pending_websocket_events_.push_back({type, std::move(payload)});
+  xSemaphoreGive(this->websocket_event_mutex_);
+}
+
+void OpenDtuMeterBridge::process_pending_websocket_events_() {
+  if (this->websocket_event_mutex_ == nullptr || this->data_mutex_ == nullptr) {
+    return;
+  }
+
+  std::vector<PendingWebSocketEvent> events;
+  xSemaphoreTake(this->websocket_event_mutex_, portMAX_DELAY);
+  events.swap(this->pending_websocket_events_);
+  xSemaphoreGive(this->websocket_event_mutex_);
+
+  for (auto &event : events) {
+    switch (event.type) {
+      case WebSocketEventType::CONNECTED:
+        xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+        this->ws_connected_ = true;
+        xSemaphoreGive(this->data_mutex_);
+        ESP_LOGI(TAG, "WebSocket connected to OpenDTU");
+        this->publish_state_();
+        break;
+      case WebSocketEventType::DISCONNECTED:
+        xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+        this->ws_connected_ = false;
+        xSemaphoreGive(this->data_mutex_);
+        ESP_LOGW(TAG, "WebSocket disconnected, using fallback Modbus values");
+        this->mark_data_stale_and_reset_();
+        break;
+      case WebSocketEventType::ERROR:
+        xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+        this->ws_connected_ = false;
+        xSemaphoreGive(this->data_mutex_);
+        ESP_LOGW(TAG, "WebSocket error, using fallback Modbus values");
+        this->mark_data_stale_and_reset_();
+        break;
+      case WebSocketEventType::DATA:
+        this->process_livedata_(event.payload.data(), event.payload.size());
+        break;
+    }
+  }
+}
+
 void OpenDtuMeterBridge::websocket_event_handler_(void *handler_args, esp_event_base_t base, int32_t event_id,
-                                             void *event_data) {
+                                                  void *event_data) {
   auto *self = static_cast<OpenDtuMeterBridge *>(handler_args);
   if (self == nullptr) {
     return;
@@ -353,38 +428,44 @@ void OpenDtuMeterBridge::websocket_event_handler_(void *handler_args, esp_event_
 
   switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
-      ESP_LOGI(TAG, "WebSocket connected to OpenDTU");
-      self->ws_connected_ = true;
-      self->publish_state_();
+      self->queue_websocket_event_(WebSocketEventType::CONNECTED);
       break;
     case WEBSOCKET_EVENT_DISCONNECTED:
-      ESP_LOGW(TAG, "WebSocket disconnected, using fallback Modbus values");
-      self->ws_connected_ = false;
-      self->mark_data_stale_and_reset_();
+      self->queue_websocket_event_(WebSocketEventType::DISCONNECTED);
       break;
     case WEBSOCKET_EVENT_DATA:
+      if (data == nullptr) {
+        break;
+      }
       if (data->op_code != 0x01 && data->op_code != 0x00) {
         break;
       }
-      if (data->payload_len <= 0) {
+      if (data->payload_len <= 0 || data->payload_offset < 0 || data->data_len < 0) {
         break;
       }
-      if (!self->ws_buf_ensure_((size_t) data->payload_len + 1)) {
-        break;
-      }
-      if (data->data_len > 0) {
-        memcpy(self->ws_buf_ + data->payload_offset, data->data_ptr, data->data_len);
-      }
-      if (data->payload_offset + data->data_len >= data->payload_len) {
-        size_t total = (size_t) data->payload_len;
-        self->ws_buf_[total] = '\0';
-        self->process_livedata_(self->ws_buf_, total);
+      {
+        const size_t payload_len = (size_t) data->payload_len;
+        const size_t payload_offset = (size_t) data->payload_offset;
+        const size_t data_len = (size_t) data->data_len;
+        if (payload_offset > payload_len || data_len > payload_len - payload_offset ||
+            (data_len > 0 && data->data_ptr == nullptr)) {
+          ESP_LOGW(TAG, "Ignoring invalid WebSocket fragment");
+          break;
+        }
+        if (!self->ws_buf_ensure_(payload_len + 1)) {
+          break;
+        }
+        if (data_len > 0) {
+          memcpy(self->ws_buf_ + payload_offset, data->data_ptr, data_len);
+        }
+        if (payload_offset + data_len == payload_len) {
+          self->ws_buf_[payload_len] = '\0';
+          self->queue_websocket_event_(WebSocketEventType::DATA, std::string(self->ws_buf_, payload_len));
+        }
       }
       break;
     case WEBSOCKET_EVENT_ERROR:
-      ESP_LOGW(TAG, "WebSocket error, using fallback Modbus values");
-      self->ws_connected_ = false;
-      self->mark_data_stale_and_reset_();
+      self->queue_websocket_event_(WebSocketEventType::ERROR);
       break;
     default:
       break;
@@ -396,22 +477,33 @@ void OpenDtuMeterBridge::start_websocket_() {
     return;
   }
 
-  char uri[160];
-  snprintf(uri, sizeof(uri), "ws://%s:%u%s", this->host_.c_str(), this->port_, this->path_.c_str());
+  this->ws_uri_ = "ws://" + this->host_ + ":" + std::to_string(this->port_) + this->path_;
 
-  char userpass[128];
-  int up_len = snprintf(userpass, sizeof(userpass), "%s:%s", this->username_.c_str(), this->password_.c_str());
+  const std::string userpass = this->username_ + ":" + this->password_;
+  size_t b64_capacity = 0;
+  int b64_result = mbedtls_base64_encode(nullptr, 0, &b64_capacity,
+                                         reinterpret_cast<const unsigned char *>(userpass.data()), userpass.size());
+  if (b64_result != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL || b64_capacity == 0 || b64_capacity == SIZE_MAX) {
+    ESP_LOGE(TAG, "Failed to determine Basic Auth header size (error=%d)", b64_result);
+    return;
+  }
 
-  unsigned char b64[128];
+  std::vector<unsigned char> b64(b64_capacity);
   size_t b64_len = 0;
-  mbedtls_base64_encode(b64, sizeof(b64), &b64_len, (const unsigned char *) userpass, (size_t) up_len);
+  b64_result = mbedtls_base64_encode(b64.data(), b64.size(), &b64_len,
+                                     reinterpret_cast<const unsigned char *>(userpass.data()), userpass.size());
+  if (b64_result != 0) {
+    ESP_LOGE(TAG, "Failed to encode Basic Auth header (error=%d)", b64_result);
+    return;
+  }
 
-  static char auth_header[160];
-  snprintf(auth_header, sizeof(auth_header), "Authorization: Basic %.*s\r\n", (int) b64_len, (const char *) b64);
+  this->ws_auth_header_ = "Authorization: Basic ";
+  this->ws_auth_header_.append(reinterpret_cast<const char *>(b64.data()), b64_len);
+  this->ws_auth_header_.append("\r\n");
 
   esp_websocket_client_config_t cfg = {};
-  cfg.uri = uri;
-  cfg.headers = auth_header;
+  cfg.uri = this->ws_uri_.c_str();
+  cfg.headers = this->ws_auth_header_.c_str();
   cfg.reconnect_timeout_ms = 5000;
   cfg.network_timeout_ms = 10000;
   cfg.disable_auto_reconnect = false;
@@ -422,7 +514,8 @@ void OpenDtuMeterBridge::start_websocket_() {
     return;
   }
 
-  esp_websocket_register_events(this->ws_client_, WEBSOCKET_EVENT_ANY, &OpenDtuMeterBridge::websocket_event_handler_, this);
+  esp_websocket_register_events(this->ws_client_, WEBSOCKET_EVENT_ANY,
+                                &OpenDtuMeterBridge::websocket_event_handler_, this);
   esp_err_t err = esp_websocket_client_start(this->ws_client_);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start WebSocket client: %s", esp_err_to_name(err));
@@ -432,7 +525,7 @@ void OpenDtuMeterBridge::start_websocket_() {
   }
 
   this->ws_started_ = true;
-  ESP_LOGI(TAG, "Starting WebSocket client: %s (user=%s)", uri, this->username_.c_str());
+  ESP_LOGI(TAG, "Starting WebSocket client: %s (user=%s)", this->ws_uri_.c_str(), this->username_.c_str());
 }
 
 void OpenDtuMeterBridge::stop_websocket_() {
@@ -442,18 +535,26 @@ void OpenDtuMeterBridge::stop_websocket_() {
     this->ws_client_ = nullptr;
   }
   this->ws_started_ = false;
-  this->ws_connected_ = false;
+  if (this->websocket_event_mutex_ != nullptr) {
+    xSemaphoreTake(this->websocket_event_mutex_, portMAX_DELAY);
+    this->pending_websocket_events_.clear();
+    xSemaphoreGive(this->websocket_event_mutex_);
+  }
+  if (this->data_mutex_ != nullptr) {
+    xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+    this->ws_connected_ = false;
+    xSemaphoreGive(this->data_mutex_);
+  }
 }
 
 float OpenDtuMeterBridge::get_voltage(int phase) {
   if (phase < 1 || phase > 3) {
     return this->default_voltage_;
   }
-  if (this->data_stale_) {
-    return this->default_voltage_;
-  }
   xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
-  float value = this->modbus_voltage(this->phase_[phase].voltage, this->phase_[phase].has_data);
+  float value = this->data_stale_
+                    ? this->default_voltage_
+                    : this->modbus_voltage(this->phase_[phase].voltage, this->phase_[phase].has_data);
   xSemaphoreGive(this->data_mutex_);
   return value;
 }
@@ -462,11 +563,10 @@ float OpenDtuMeterBridge::get_current(int phase) {
   if (phase < 1 || phase > 3) {
     return 0.0f;
   }
-  if (this->data_stale_) {
-    return 0.0f;
-  }
   xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
-  float value = this->modbus_current_power(this->phase_[phase].current, this->phase_[phase].has_data);
+  float value = this->data_stale_
+                    ? 0.0f
+                    : this->modbus_current_power(this->phase_[phase].current, this->phase_[phase].has_data);
   xSemaphoreGive(this->data_mutex_);
   return value;
 }
@@ -475,20 +575,23 @@ float OpenDtuMeterBridge::get_power(int phase) {
   if (phase < 1 || phase > 3) {
     return 0.0f;
   }
-  if (this->data_stale_) {
-    return 0.0f;
-  }
   xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
-  float value = this->modbus_current_power(this->phase_[phase].power, this->phase_[phase].has_data);
+  float value = this->data_stale_
+                    ? 0.0f
+                    : this->modbus_current_power(this->phase_[phase].power, this->phase_[phase].has_data);
   xSemaphoreGive(this->data_mutex_);
   return value;
 }
 
 float OpenDtuMeterBridge::get_total_power() {
-  if (this->data_stale_) {
-    return 0.0f;
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  float total = 0.0f;
+  if (!this->data_stale_) {
+    for (int phase = 1; phase <= 3; phase++) {
+      total += this->modbus_current_power(this->phase_[phase].power, this->phase_[phase].has_data);
+    }
   }
-  float total = this->get_power(1) + this->get_power(2) + this->get_power(3);
+  xSemaphoreGive(this->data_mutex_);
   if (!float_is_finite(total)) {
     return 0.0f;
   }
@@ -496,23 +599,37 @@ float OpenDtuMeterBridge::get_total_power() {
 }
 
 float OpenDtuMeterBridge::get_frequency() {
-  if (this->data_stale_) {
-    return this->default_frequency_;
-  }
   xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
-  float value = this->modbus_frequency(this->measured_frequency_, this->has_frequency_data_);
+  float value = this->data_stale_
+                    ? this->default_frequency_
+                    : this->modbus_frequency(this->measured_frequency_, this->has_frequency_data_);
   xSemaphoreGive(this->data_mutex_);
   return value;
 }
 
-bool OpenDtuMeterBridge::is_data_valid() { return !this->data_stale_ && this->ws_connected_; }
+bool OpenDtuMeterBridge::is_data_valid() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  bool valid = !this->data_stale_ && this->ws_connected_;
+  xSemaphoreGive(this->data_mutex_);
+  return valid;
+}
+
+bool OpenDtuMeterBridge::is_websocket_connected() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  bool connected = this->ws_connected_;
+  xSemaphoreGive(this->data_mutex_);
+  return connected;
+}
 
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 6, 0)
 modbus::ResponseStatus MeterBridgeModbusServer::on_read_registers(uint16_t start_address,
-                                                                    uint16_t number_of_registers,
-                                                                    modbus::RegisterValues &registers) {
+                                                                  uint16_t number_of_registers,
+                                                                  modbus::RegisterValues &registers) {
   if (this->bridge_ == nullptr) {
     return modbus::ModbusExceptionCode::SERVICE_DEVICE_FAILURE;
+  }
+  if (number_of_registers == 0 || number_of_registers > MAX_MODBUS_READ_REGISTERS) {
+    return modbus::ModbusExceptionCode::ILLEGAL_DATA_VALUE;
   }
 
   std::vector<uint8_t> response;
@@ -527,11 +644,19 @@ modbus::ResponseStatus MeterBridgeModbusServer::on_read_registers(uint16_t start
 }
 #else
 void MeterBridgeModbusServer::on_modbus_read_registers(uint8_t function_code, uint16_t start_address,
-                                                         uint16_t number_of_registers) {
+                                                       uint16_t number_of_registers) {
   if (function_code != 0x03 && function_code != 0x04) {
     return;
   }
   if (this->bridge_ == nullptr) {
+    return;
+  }
+  if (number_of_registers == 0 || number_of_registers > MAX_MODBUS_READ_REGISTERS) {
+    std::vector<uint8_t> error_response;
+    error_response.push_back(this->address_);
+    error_response.push_back(function_code | 0x80);
+    error_response.push_back(0x03);
+    this->send_raw(error_response);
     return;
   }
 
@@ -560,6 +685,12 @@ void OpenDtuMeterBridge::set_modbus_server(modbus::Modbus *parent, uint8_t slave
 
 void OpenDtuMeterBridge::setup() {
   this->data_mutex_ = xSemaphoreCreateMutex();
+  this->websocket_event_mutex_ = xSemaphoreCreateMutex();
+  if (this->data_mutex_ == nullptr || this->websocket_event_mutex_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to create component mutexes");
+    this->mark_failed();
+    return;
+  }
   this->sync_modbus_registers_();
   if (this->modbus_parent_ != nullptr && this->modbus_slave_address_ != 0) {
     this->modbus_server_device_.set_bridge(this);
@@ -577,7 +708,7 @@ void OpenDtuMeterBridge::setup() {
     }
 #endif
   }
-#ifdef USE_WIFI_LISTENERS
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
   wifi::global_wifi_component->add_connect_state_listener(this);
 #endif
   this->publish_state_();
@@ -588,8 +719,8 @@ void OpenDtuMeterBridge::setup() {
 #endif
 }
 
-#ifdef USE_WIFI_LISTENERS
-void OpenDtuMeterBridge::on_wifi_connect_state(const std::string &ssid, const wifi::bssid_t &bssid) {
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
+void OpenDtuMeterBridge::on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6>) {
   if (ssid.empty()) {
     ESP_LOGW(TAG, "WiFi disconnected, stopping WebSocket client");
     this->stop_websocket_();
@@ -603,14 +734,21 @@ void OpenDtuMeterBridge::on_wifi_connect_state(const std::string &ssid, const wi
 #endif
 
 void OpenDtuMeterBridge::loop() {
+  this->process_pending_websocket_events_();
+
 #ifdef USE_WIFI
   if (!this->ws_started_ && wifi::global_wifi_component->is_connected()) {
     this->start_websocket_();
   }
 #endif
 
-  if (!this->data_stale_) {
-    int64_t age = esp_timer_get_time() - this->last_data_us_;
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  const bool data_stale = this->data_stale_;
+  const int64_t last_data_us = this->last_data_us_;
+  xSemaphoreGive(this->data_mutex_);
+
+  if (!data_stale) {
+    int64_t age = esp_timer_get_time() - last_data_us;
     if (age > (int64_t) this->data_timeout_ms_ * 1000) {
       ESP_LOGW(TAG, "No livedata from OpenDTU for %lld ms, using fallback Modbus values", (long long) (age / 1000));
       this->mark_data_stale_and_reset_();
