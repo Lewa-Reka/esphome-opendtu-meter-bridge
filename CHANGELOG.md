@@ -21,6 +21,7 @@ All notable changes to this fork are documented here.
 - Made DTSU666 current registers positive RMS magnitudes while retaining directional active power and the legacy SDM630 current convention.
 - Hardened WebSocket callback handoff with synchronized state, bounded/coalesced event queuing, and validated fragmented frames.
 - Removed fixed-size Basic Auth buffers, marked the password as sensitive in supported ESPHome versions, and validated Modbus slave addresses and read quantities.
+- Updated the GitHub-hosted checkout and Python setup actions to their current Node.js runtime generation.
 
 ### Deprecated
 

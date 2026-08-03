@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build meter profile tests
         run: >-
@@ -46,10 +46,10 @@ jobs:
           - 2025.6.3
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -102,7 +102,7 @@ jobs:
           - opendtu_sdm630_legacy_ci.yaml
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Create secrets.yaml
         run: cp secrets.yaml.example tests/secrets.yaml
