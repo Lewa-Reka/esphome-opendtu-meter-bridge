@@ -1,18 +1,18 @@
 name: Report an issue
-description: Report a problem with the OpenDTU to SDM630 ESPHome component
+description: Report a problem with the OpenDTU Meter Bridge ESPHome component
 body:
   - type: markdown
     attributes:
       value: |
         Before reporting an issue, please review the [README](https://github.com/Lewa-Reka/esphome-opendtu-to-sdm630/blob/main/README.md) - especially **Requirements**, **Configuration reference**, and **Failsafe behaviour**.
 
-        **Scope of this repository:** the `opendtu_sdm630` ESPHome component only (WebSocket livedata → Modbus SDM630 emulator).
+        **Scope of this repository:** the `opendtu_meter_bridge` ESPHome component only (WebSocket livedata → selectable SDM630/DTSU666 Modbus profile).
 
         **Out of scope - issues will be closed without a response** if the report does not show that the problem is in this component, for example:
         - OpenDTU setup, DTU hardware, or Hoymiles microinverter connectivity
-        - Hybrid inverter wiring, RS485 port setup, or inverter menu configuration (e.g. Deye AC Couple, Grid Tie Meter 2, Eastron meter type)
+        - Hybrid inverter wiring, RS485 port setup, or inverter menu configuration (e.g. Deye AC Couple, Grid Tie Meter 2, Eastron/CHNT meter selection)
 
-        You must demonstrate a component-side fault: ESPHome logs (`opendtu_sdm630`), published sensors (WebSocket Status, Data Valid, phase values), or incorrect Modbus register output from the bridge - not only symptoms on the inverter display.
+        You must demonstrate a component-side fault: ESPHome logs (`opendtu_meter_bridge`), published sensors (WebSocket Status, Data Valid, phase values), or incorrect Modbus register output from the bridge - not only symptoms on the inverter display.
 
   - type: textarea
     id: problem
@@ -47,7 +47,18 @@ body:
       label: Component version
       description: >
         Value from the **Component Version** text sensor, a git tag/commit.
-      placeholder: e.g. 0.0.1
+      placeholder: e.g. 0.2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: meter_profile
+    attributes:
+      label: Meter profile
+      description: Select the value configured under `opendtu_meter_bridge.meter_profile`.
+      options:
+        - sdm630 (Eastron SDM630)
+        - dtsu666 (CHINT DTSU666 / Deye CHNT)
     validations:
       required: true
 
@@ -91,13 +102,15 @@ body:
     attributes:
       label: Relevant YAML (sanitized)
       description: >
-        Paste the `opendtu_sdm630:`, `uart:`, and `modbus:` blocks from your config.
+        Paste the `opendtu_meter_bridge:`, `uart:`, and `modbus:` blocks from your config.
         Remove passwords and WiFi credentials - use `!secret` placeholders.
       render: yaml
       placeholder: |
-        opendtu_sdm630:
+        opendtu_meter_bridge:
           host: 192.168.1.50
           password: !secret opendtu_password
+          # Allowed values: sdm630 or dtsu666.
+          meter_profile: sdm630
           slave_address: 0x02
           microinverter_map:
             - name: Garage-HMS-2000-4T
@@ -110,11 +123,11 @@ body:
       description: |
         **Required for most reports.** Output from `esphome logs <your-config>.yaml`.
 
-        Set `logger: level: DEBUG` temporarily if needed. Include lines tagged `opendtu_sdm630`.
+        Set `logger: level: DEBUG` temporarily if needed. Include lines tagged `opendtu_meter_bridge`.
       render: txt
       placeholder: |
-        [00:00:00][I][opendtu_sdm630:379]: WebSocket connected to OpenDTU
-        [00:00:00][W][opendtu_sdm630:258]: Microinverter serial '...' not found in livedata
+        [00:00:00][I][opendtu_meter_bridge]: WebSocket connected to OpenDTU
+        [00:00:00][W][opendtu_meter_bridge]: Microinverter serial '...' not found in livedata
     validations:
       required: true
 

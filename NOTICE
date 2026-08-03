@@ -1,5 +1,5 @@
 ================================================================================
-ESPHome OpenDTU to SDM630
+ESPHome OpenDTU Meter Bridge
 Copyright 2026 Lewa-Reka <lewareka.yt@gmail.com>
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +16,8 @@ limitations under the License.
 ================================================================================
 
 This project provides an ESPHome external component that bridges OpenDTU
-microinverter data to a Modbus RTU Eastron SDM630 energy meter emulator.
+microinverter data to selectable Modbus RTU Eastron SDM630 and CHINT DTSU666
+register profiles.
 
 Project Repository: https://github.com/Lewa-Reka/esphome-opendtu-to-sdm630
 

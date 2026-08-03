@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from pathlib import Path
 
 import esphome.codegen as cg
@@ -29,12 +30,12 @@ from esphome.yaml_util import load_yaml
 
 _IDF_COMPONENTS_YML = Path(__file__).with_name("idf_component.yml")
 
-CODEOWNERS = ["@local"]
+CODEOWNERS = ["@Lewa-Reka"]
 
 AUTO_LOAD = ["binary_sensor", "button", "modbus", "sensor", "text_sensor"]
 DEPENDENCIES = ["wifi"]
 
-COMPONENT_VERSION = "0.0.1"
+COMPONENT_VERSION = "0.2.0"
 
 CONF_HOST = "host"
 CONF_PATH = "path"
@@ -48,6 +49,10 @@ CONF_MICROINVERTER_NAME = "name"
 CONF_GRID_PHASE = "grid_phase"
 CONF_PUBLISH_SENSORS = "publish_sensors"
 CONF_SLAVE_ADDRESS = "slave_address"
+# Supported configuration values: sdm630 or dtsu666.
+CONF_METER_PROFILE = "meter_profile"
+# Legacy option retained for a transition period; it accepts the same two values.
+CONF_METER_TYPE = "meter_type"
 
 CONF_VOLTAGE_L1 = "voltage_l1"
 CONF_VOLTAGE_L2 = "voltage_l2"
@@ -65,13 +70,20 @@ CONF_DATA_VALID = "data_valid"
 CONF_COMPONENT_VERSION = "component_version"
 CONF_RESTART = "restart"
 
-opendtu_sdm630_ns = cg.esphome_ns.namespace("opendtu_sdm630")
-OpenDtuSdm630 = opendtu_sdm630_ns.class_(
-    "OpenDtuSdm630", cg.Component
+opendtu_meter_bridge_ns = cg.esphome_ns.namespace("opendtu_meter_bridge")
+OpenDtuMeterBridge = opendtu_meter_bridge_ns.class_(
+    "OpenDtuMeterBridge", cg.Component
 )
-RebootDeviceButton = opendtu_sdm630_ns.class_(
+RebootDeviceButton = opendtu_meter_bridge_ns.class_(
     "RebootDeviceButton", button.Button, cg.Component
 )
+MeterProfile = opendtu_meter_bridge_ns.enum("MeterProfile", is_class=True)
+METER_PROFILES = {
+    "sdm630": MeterProfile.SDM630,
+    "dtsu666": MeterProfile.DTSU666,
+}
+
+_LOGGER = logging.getLogger(__name__)
 MICROINVERTER_MAP_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -183,10 +195,22 @@ def _ensure_default_entities(config):
     return config
 
 
+def _normalize_meter_profile(config):
+    if CONF_METER_TYPE in config:
+        _LOGGER.warning(
+            "The 'meter_type' option is deprecated; use 'meter_profile' instead "
+            "(allowed values: sdm630, dtsu666)."
+        )
+        config[CONF_METER_PROFILE] = config.pop(CONF_METER_TYPE)
+    elif CONF_METER_PROFILE not in config:
+        config[CONF_METER_PROFILE] = MeterProfile.SDM630
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
-            cv.GenerateID(): cv.declare_id(OpenDtuSdm630),
+            cv.GenerateID(): cv.declare_id(OpenDtuMeterBridge),
             cv.Required(CONF_HOST): cv.string,
             cv.Optional(CONF_PORT, default=80): cv.port,
             cv.Optional(CONF_PATH, default="/livedata"): cv.string,
@@ -194,6 +218,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_PASSWORD): cv.string,
             cv.Required(CONF_MODBUS_ID): cv.use_id(modbus.ModbusServer),
             cv.Optional(CONF_SLAVE_ADDRESS, default=0x02): cv.hex_uint8_t,
+            cv.Exclusive(CONF_METER_PROFILE, "meter_profile_option"): cv.enum(
+                METER_PROFILES, lower=True
+            ),
+            cv.Exclusive(CONF_METER_TYPE, "meter_profile_option"): cv.enum(
+                METER_PROFILES, lower=True
+            ),
             cv.Optional(CONF_DATA_TIMEOUT, default="15s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_DEFAULT_VOLTAGE, default=230.0): cv.float_,
             cv.Optional(CONF_DEFAULT_FREQUENCY, default=50.0): cv.float_,
@@ -216,19 +246,32 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RESTART): RESTART_BUTTON_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
+    _normalize_meter_profile,
     _ensure_default_entities,
     cv.only_on_esp32,
 )
 
 FINAL_VALIDATE_SCHEMA = modbus.final_validate_modbus_device(
-    "opendtu_sdm630", role="server"
+    "opendtu_meter_bridge", role="server"
 )
 
 
 def _register_idf_components():
     data = load_yaml(_IDF_COMPONENTS_YML) or {}
     for name, ref in (data.get("dependencies") or {}).items():
-        esp32.add_idf_component(name=name, ref=str(ref))
+        try:
+            # Newer ESPHome releases accept ESP Component Registry identifiers directly.
+            esp32.add_idf_component(name=name, ref=str(ref))
+        except TypeError:
+            # Older supported ESPHome releases require an explicit Git source.
+            if name != "espressif/esp_websocket_client":
+                raise
+            esp32.add_idf_component(
+                name="esp_websocket_client",
+                repo="https://github.com/espressif/esp-protocols.git",
+                ref="70bf122fc8bc74622dcf7e15233b5b2af9088df5",
+                path="components/esp_websocket_client",
+            )
 
 
 async def to_code(config):
@@ -246,6 +289,7 @@ async def to_code(config):
     cg.add(var.set_data_timeout_ms(config[CONF_DATA_TIMEOUT]))
     cg.add(var.set_default_voltage(config[CONF_DEFAULT_VOLTAGE]))
     cg.add(var.set_default_frequency(config[CONF_DEFAULT_FREQUENCY]))
+    cg.add(var.set_meter_profile(config[CONF_METER_PROFILE]))
     cg.add(var.set_component_version(COMPONENT_VERSION))
 
     for entry in config[CONF_MICROINVERTER_MAP]:

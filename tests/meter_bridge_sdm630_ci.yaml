@@ -1,26 +1,29 @@
 substitutions:
-  device_name: opendtu-sdm630-ci
+  device_name: meter-bridge-sdm630-ci
 
 external_components:
   - source:
       type: local
       path: ../components
-    components: [opendtu_sdm630]
+    components: [opendtu_meter_bridge]
 
-opendtu_sdm630:
+opendtu_meter_bridge:
   id: opendtu
   host: 192.168.1.50
   password: !secret opendtu_password
   modbus_id: modbus_1
+  # Supported values: sdm630 or dtsu666. This job verifies the SDM630 profile.
+  meter_profile: sdm630
   microinverter_map:
     - name: test-inverter
       grid_phase: 1
 
 esphome:
   name: ${device_name}
-  min_version: "2026.7.0"
+  min_version: "2025.6.3"
 
 esp32:
+  board: esp32dev
   variant: esp32
   framework:
     type: esp-idf

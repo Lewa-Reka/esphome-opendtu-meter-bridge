@@ -2,10 +2,13 @@
 
 #pragma once
 
+#include "meter_profile.h"
+
 #include "esphome/core/defines.h"
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
-#include "esphome/core/string_ref.h"
+#include "esphome/core/macros.h"
+#include "esphome/core/version.h"
 #include "esphome/components/modbus/modbus.h"
 #ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -29,11 +32,10 @@
 #include <freertos/semphr.h>
 
 #include <cstdint>
-#include <span>
 #include <string>
 #include <vector>
 
-namespace esphome::opendtu_sdm630 {
+namespace esphome::opendtu_meter_bridge {
 
 struct MicroinverterMapEntry {
   std::string inverter_serial;
@@ -48,20 +50,39 @@ struct PhaseData {
   bool has_data{false};
 };
 
-class OpenDtuSdm630;
+class OpenDtuMeterBridge;
 
-class OpenDtuSdm630ModbusServer : public modbus::ModbusServerDevice {
+class MeterBridgeModbusServer
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 6, 0)
+    : public modbus::ModbusServerDevice {
+#else
+    : public modbus::ModbusDevice {
+#endif
  public:
-  void set_bridge(OpenDtuSdm630 *bridge) { this->bridge_ = bridge; }
+  void set_bridge(OpenDtuMeterBridge *bridge) { this->bridge_ = bridge; }
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 6, 0)
   modbus::ResponseStatus on_read_registers(uint16_t start_address, uint16_t number_of_registers,
                                            modbus::RegisterValues &registers) override;
+#else
+  void on_modbus_data(const std::vector<uint8_t> &data) override {}
+  void on_modbus_read_registers(uint8_t function_code, uint16_t start_address,
+                                uint16_t number_of_registers) override;
+#endif
 
  protected:
-  OpenDtuSdm630 *bridge_{nullptr};
+  OpenDtuMeterBridge *bridge_{nullptr};
 };
 
-class OpenDtuSdm630 : public Component
-#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
+#if ESPHOME_VERSION_CODE < VERSION_CODE(2026, 6, 0)
+// Swallows frames at Deye's main-meter address 0x01 to suppress unknown-address logs.
+class ModbusSilenceDevice : public modbus::ModbusDevice {
+ public:
+  void on_modbus_data(const std::vector<uint8_t> &data) override {}
+};
+#endif
+
+class OpenDtuMeterBridge : public Component
+#ifdef USE_WIFI_LISTENERS
     ,
                       public wifi::WiFiConnectStateListener
 #endif
@@ -75,8 +96,13 @@ class OpenDtuSdm630 : public Component
   void set_data_timeout_ms(uint32_t ms) { this->data_timeout_ms_ = ms; }
   void set_default_voltage(float value) { this->default_voltage_ = value; }
   void set_default_frequency(float value) { this->default_frequency_ = value; }
+  void set_meter_profile(MeterProfile profile) { this->meter_profile_ = profile; }
   void set_component_version(const std::string &version) { this->component_version_ = version; }
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 6, 0)
   void set_modbus_server(modbus::ModbusServerHub *parent, uint8_t slave_address);
+#else
+  void set_modbus_server(modbus::Modbus *parent, uint8_t slave_address);
+#endif
   void add_microinverter_map_by_serial(const std::string &inverter_serial, uint8_t grid_phase);
   void add_microinverter_map_by_name(const std::string &inverter_name, uint8_t grid_phase);
 
@@ -87,9 +113,8 @@ class OpenDtuSdm630 : public Component
   float get_frequency();
   bool is_data_valid();
   bool is_websocket_connected() const { return this->ws_connected_; }
-  uint16_t get_modbus_register(uint16_t address);
-
-  static constexpr uint16_t MODBUS_REG_COUNT = 0x0180;
+  bool read_modbus_registers(uint16_t start_address, uint16_t number_of_registers,
+                             std::vector<uint8_t> &response);
 
 #ifdef USE_SENSOR
   void set_voltage_l1_sensor(sensor::Sensor *sensor) { this->voltage_l1_sensor_ = sensor; }
@@ -123,8 +148,8 @@ class OpenDtuSdm630 : public Component
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
-#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
-  void on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6> bssid) override;
+#ifdef USE_WIFI_LISTENERS
+  void on_wifi_connect_state(const std::string &ssid, const wifi::bssid_t &bssid) override;
 #endif
 
  protected:
@@ -137,7 +162,6 @@ class OpenDtuSdm630 : public Component
   void clear_phase_measurements_();
   void sync_modbus_registers_();
   void write_modbus_defaults_();
-  void set_modbus_float_(uint16_t reg_addr, float value);
   void process_livedata_(const char *json, size_t len);
   void publish_state_();
   float json_field_v_(const cJSON *ac0, const char *key);
@@ -156,13 +180,14 @@ class OpenDtuSdm630 : public Component
   uint32_t data_timeout_ms_{15000};
   float default_voltage_{230.0f};
   float default_frequency_{50.0f};
+  MeterProfile meter_profile_{MeterProfile::SDM630};
   std::string component_version_;
 
   std::vector<MicroinverterMapEntry> microinverter_map_;
   PhaseData phase_[4];
   float measured_frequency_{0.0f};
   bool has_frequency_data_{false};
-  uint16_t modbus_regs_[MODBUS_REG_COUNT]{};
+  uint16_t modbus_regs_[METER_PROFILE_REGISTER_CAPACITY]{};
   SemaphoreHandle_t data_mutex_{nullptr};
 
   char *ws_buf_{nullptr};
@@ -173,9 +198,16 @@ class OpenDtuSdm630 : public Component
   volatile int64_t last_data_us_{0};
   volatile bool data_stale_{true};
 
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 6, 0)
   modbus::ModbusServerHub *modbus_parent_{nullptr};
+#else
+  modbus::Modbus *modbus_parent_{nullptr};
+#endif
   uint8_t modbus_slave_address_{0};
-  OpenDtuSdm630ModbusServer modbus_server_device_{};
+  MeterBridgeModbusServer modbus_server_device_{};
+#if ESPHOME_VERSION_CODE < VERSION_CODE(2026, 6, 0)
+  ModbusSilenceDevice modbus_silence_device_{};
+#endif
 
 #ifdef USE_SENSOR
   sensor::Sensor *voltage_l1_sensor_{nullptr};
@@ -209,4 +241,4 @@ class RebootDeviceButton : public button::Button, public Component {
 };
 #endif
 
-}  // namespace esphome::opendtu_sdm630
+}  // namespace esphome::opendtu_meter_bridge

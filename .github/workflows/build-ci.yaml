@@ -14,13 +14,17 @@ concurrency:
 
 jobs:
   build-ci:
-    name: Building opendtu_sdm630_ci / ${{ matrix.esphome-version }}
+    name: Building ${{ matrix.config }} / ${{ matrix.esphome-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         esphome-version:
           - stable
+          - 2025.6.3
+        config:
+          - meter_bridge_sdm630_ci.yaml
+          - meter_bridge_dtsu666_ci.yaml
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -31,5 +35,5 @@ jobs:
       - name: ESPHome ${{ matrix.esphome-version }}
         uses: esphome/build-action@v7
         with:
-          yaml-file: tests/opendtu_sdm630_ci.yaml
+          yaml-file: tests/${{ matrix.config }}
           version: ${{ matrix.esphome-version }}
