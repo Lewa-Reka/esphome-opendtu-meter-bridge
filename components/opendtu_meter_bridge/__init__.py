@@ -42,7 +42,7 @@ from esphome.yaml_util import load_yaml
 
 _IDF_COMPONENTS_YML = Path(__file__).with_name("idf_component.yml")
 
-CODEOWNERS = ["@withoutspam", "@Lewa-Reka"]
+CODEOWNERS = ["@local"]
 
 AUTO_LOAD = ["binary_sensor", "button", "modbus", "sensor", "text_sensor"]
 DEPENDENCIES = ["wifi"]

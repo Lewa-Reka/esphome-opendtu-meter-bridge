@@ -1,6 +1,6 @@
 external_components:
-  # Use @v0.2.0 for a reproducible release build; @main follows the newest fixes.
-  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
+  # @main follows development; pin a reviewed release tag or commit for reproducible builds.
+  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
     components: [opendtu_meter_bridge]
 
 opendtu_meter_bridge:

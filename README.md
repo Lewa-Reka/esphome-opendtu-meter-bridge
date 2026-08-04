@@ -17,13 +17,13 @@ limitations under the License.
 -->
 
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/withoutspam/esphome-opendtu-to-sdm630/build-ci.yaml?style=for-the-badge)
-![GitHub License](https://img.shields.io/github/license/withoutspam/esphome-opendtu-to-sdm630?style=for-the-badge)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/y/withoutspam/esphome-opendtu-to-sdm630?style=for-the-badge)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lewa-Reka/esphome-opendtu-to-sdm630/build-ci.yaml?style=for-the-badge)
+![GitHub License](https://img.shields.io/github/license/Lewa-Reka/esphome-opendtu-to-sdm630?style=for-the-badge)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/y/Lewa-Reka/esphome-opendtu-to-sdm630?style=for-the-badge)
 
 ESPHome external component that reads Hoymiles microinverter data from [OpenDTU](https://github.com/tbnobody/OpenDTU) and presents instantaneous measurements to a hybrid inverter using a Modbus RTU **Eastron SDM630** or **CHINT DTSU666** register profile.
 
-> **Note:** The SDM630 profile was developed and tested with Deye. The DTSU666 profile is implemented from the published [CHINT Modbus specification](https://www.deyeinverter.com/deyeinverter/2022/06/10/chintthreephase-instructionmanual-dt%28s%29su666-y0.464.1002v1.5190617.pdf) and has not yet been validated against physical DTSU666 hardware.
+> **Note:** The SDM630 profile was developed and tested with Deye. The DTSU666 profile is implemented from the published [CHINT Modbus specification](https://www.deyeinverter.com/deyeinverter/2022/06/10/chintthreephase-instructionmanual-dt%28s%29su666-y0.464.1002v1.5190617.pdf). Its phase active-power block has been exercised with Deye configured for CHNT and Grid Tie Meter 2, but it has not been compared with physical DTSU666 hardware.
 
 ## Why this project exists
 
@@ -93,7 +93,7 @@ Each microinverter (**MI**) only needs radio reach to **OpenDTU**. The bridge su
 | Deye inverter | **SUN-12K-SG04LP3-EU**, firmware **1172**, Grid Tie Meter 2 enabled, energy meter type **Eastron** (Advanced Settings), polls Grid Tie Meter 2 at fixed address **`0x02`** |
 | This bridge | **ESP32 DevKit V1**, **RS485-to-TTL auto-direction** converter, `slave_address: 0x02` to match Deye Grid Tie Meter 2 |
 | SDM630 profile | Validated with the Deye setup above |
-| DTSU666 profile | Implemented from the published CHINT specification; not yet validated with physical DTSU666 hardware |
+| DTSU666 profile | Phase active-power block exercised with Deye configured for CHNT and Grid Tie Meter 2; not compared with physical DTSU666 hardware |
 
 Deye uses **fixed Modbus slave addresses** - they are not configurable in the inverter menu:
 
@@ -280,7 +280,7 @@ The reference file pulls the component from GitHub:
 
 ```yaml
 external_components:
-  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
+  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
     components: [opendtu_meter_bridge]
 ```
 
@@ -288,12 +288,12 @@ It also includes WiFi, OTA, API, UART (TX=17, RX=16, 9600 baud), Modbus server, 
 
 ## Migration from `opendtu_sdm630`
 
-Version 0.2.0 introduces the recommended meter-neutral `opendtu_meter_bridge` name. Existing v0.0.1 configurations remain compatible through the `opendtu_sdm630` wrapper: after changing the source to this fork, they compile without changing the component list or YAML domain, emit a deprecation warning, and select SDM630 by default.
+Version 0.2.0 introduces the recommended meter-neutral `opendtu_meter_bridge` name. Existing v0.0.1-style configurations remain compatible through the `opendtu_sdm630` wrapper: they compile without changing the component list or YAML domain, emit a deprecation warning, and select SDM630 by default.
 
 ```yaml
-# Compatible v0.0.1 configuration on the 0.2.x fork
+# Compatible v0.0.1-style configuration on the 0.2.x codebase
 external_components:
-  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
+  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
     components: [opendtu_sdm630]
 
 opendtu_sdm630:
@@ -310,7 +310,7 @@ The recommended 0.2.x configuration uses the neutral component name and an expli
 
 ```yaml
 external_components:
-  - source: github://withoutspam/esphome-opendtu-to-sdm630@main
+  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
     components: [opendtu_meter_bridge]
 
 opendtu_meter_bridge:
@@ -330,10 +330,9 @@ Compatibility policy: both deprecated aliases -- the `opendtu_sdm630` component/
 
 ## Versioning and release guidance
 
-- The fork's `main` branch contains the current development line and can move as fixes are added.
-- Version `v0.2.0` is the reviewed release that introduces the neutral component name, compatibility wrapper, and DTSU666 profile.
-- Production installations should use `github://withoutspam/esphome-opendtu-to-sdm630@v0.2.0` for a reproducible build.
-- Use `@main` only when you deliberately want the newest fixes, or pin a reviewed commit SHA when testing a specific development revision.
+- The `main` branch contains the current development line and can move as fixes are added.
+- Until a reviewed upstream release is published, use `@main` for evaluation or pin a reviewed commit SHA for a reproducible build.
+- After a release is published, production installations should pin its tag rather than follow `@main`.
 - Compatibility changes, deprecations, and release contents are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 For local component development, point `external_components` to a local path instead:
@@ -391,10 +390,6 @@ esphome logs opendtu_meter_bridge.yaml
 ```
 
 OTA updates work through the ESPHome dashboard or `esphome upload` over the network after the first flash.
-
-## Upstream and attribution
-
-This fork is based on [Lewa-Reka/esphome-opendtu-to-sdm630](https://github.com/Lewa-Reka/esphome-opendtu-to-sdm630). The original project attribution and Apache-2.0 copyright notice are retained. The fork adds the neutral meter-bridge architecture and selectable SDM630/DTSU666 profiles.
 
 ## License
 

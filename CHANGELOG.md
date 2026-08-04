@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes to this fork are documented here.
+All notable changes to this project are documented here.
 
-## v0.2.0 - 2026-08-04
+## Unreleased
 
 ### Added
 
@@ -31,14 +31,15 @@ All notable changes to this fork are documented here.
 
 ### Compatibility
 
-- Existing v0.0.1 configurations can use the 0.2.x fork without changing `components: [opendtu_sdm630]` or the `opendtu_sdm630:` domain. They receive a deprecation warning and retain SDM630 as the default profile.
+- Existing v0.0.1 configurations can use the updated component without changing `components: [opendtu_sdm630]` or the `opendtu_sdm630:` domain. They receive a deprecation warning and retain SDM630 as the default profile.
 - New configurations should use `components: [opendtu_meter_bridge]`, the `opendtu_meter_bridge:` domain, and `meter_profile`.
 - The legacy and neutral component domains cannot be configured together in one ESPHome node.
 
 ### Validation status
 
 - The SDM630 profile has been validated with the documented Deye setup.
-- The DTSU666 profile is implemented from the published specification and has not yet been validated against physical DTSU666 hardware.
+- The DTSU666 phase active-power block has been exercised with Deye configured for CHNT and Grid Tie Meter 2; all 17 captured FC03 requests to slave `0x02` received valid responses matching OpenDTU data.
+- The DTSU666 profile is implemented from the published specification and has not been compared with physical DTSU666 hardware.
 - Both neutral profiles and the legacy-domain compatibility path are compiled in CI against ESPHome stable, the pinned 2026.7.3 release, and the minimum supported ESPHome version.
 - Host-side golden-vector tests validate the profile codec and exact SDM630/DTSU666 register output.
 
