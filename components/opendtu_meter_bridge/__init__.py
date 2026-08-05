@@ -23,7 +23,10 @@ from esphome.const import (
     DEVICE_CLASS_CONNECTIVITY,
     DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_FREQUENCY,
+    DEVICE_CLASS_APPARENT_POWER,
     DEVICE_CLASS_POWER,
+    DEVICE_CLASS_POWER_FACTOR,
+    DEVICE_CLASS_REACTIVE_POWER,
     DEVICE_CLASS_RESTART,
     DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_DIAGNOSTIC,
@@ -32,6 +35,8 @@ from esphome.const import (
     UNIT_AMPERE,
     UNIT_HERTZ,
     UNIT_VOLT,
+    UNIT_VOLT_AMPS,
+    UNIT_VOLT_AMPS_REACTIVE,
     UNIT_WATT,
 )
 
@@ -48,7 +53,7 @@ AUTO_LOAD = ["binary_sensor", "button", "modbus", "sensor", "text_sensor"]
 DEPENDENCIES = ["wifi"]
 CONFLICTS_WITH = ["opendtu_sdm630"]
 
-COMPONENT_VERSION = "0.2.0"
+COMPONENT_VERSION = "0.3.0"
 
 CONF_HOST = "host"
 CONF_PATH = "path"
@@ -77,6 +82,18 @@ CONF_POWER_L1 = "power_l1"
 CONF_POWER_L2 = "power_l2"
 CONF_POWER_L3 = "power_l3"
 CONF_TOTAL_POWER = "total_power"
+CONF_REACTIVE_POWER_L1 = "reactive_power_l1"
+CONF_REACTIVE_POWER_L2 = "reactive_power_l2"
+CONF_REACTIVE_POWER_L3 = "reactive_power_l3"
+CONF_TOTAL_REACTIVE_POWER = "total_reactive_power"
+CONF_APPARENT_POWER_L1 = "apparent_power_l1"
+CONF_APPARENT_POWER_L2 = "apparent_power_l2"
+CONF_APPARENT_POWER_L3 = "apparent_power_l3"
+CONF_TOTAL_APPARENT_POWER = "total_apparent_power"
+CONF_POWER_FACTOR_L1 = "power_factor_l1"
+CONF_POWER_FACTOR_L2 = "power_factor_l2"
+CONF_POWER_FACTOR_L3 = "power_factor_l3"
+CONF_TOTAL_POWER_FACTOR = "total_power_factor"
 CONF_FREQUENCY = "frequency"
 CONF_WEBSOCKET_CONNECTED = "websocket_connected"
 CONF_DATA_VALID = "data_valid"
@@ -135,6 +152,29 @@ POWER_SENSOR_SCHEMA = sensor.sensor_schema(
     state_class=STATE_CLASS_MEASUREMENT,
 )
 
+REACTIVE_POWER_SENSOR_SCHEMA = sensor.sensor_schema(
+    sensor.Sensor,
+    unit_of_measurement=UNIT_VOLT_AMPS_REACTIVE,
+    device_class=DEVICE_CLASS_REACTIVE_POWER,
+    accuracy_decimals=1,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+
+APPARENT_POWER_SENSOR_SCHEMA = sensor.sensor_schema(
+    sensor.Sensor,
+    unit_of_measurement=UNIT_VOLT_AMPS,
+    device_class=DEVICE_CLASS_APPARENT_POWER,
+    accuracy_decimals=1,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+
+POWER_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
+    sensor.Sensor,
+    device_class=DEVICE_CLASS_POWER_FACTOR,
+    accuracy_decimals=3,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+
 FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
     sensor.Sensor,
     unit_of_measurement=UNIT_HERTZ,
@@ -175,6 +215,18 @@ SENSOR_DEFAULTS = {
     CONF_POWER_L2: ("L2 Power", POWER_SENSOR_SCHEMA),
     CONF_POWER_L3: ("L3 Power", POWER_SENSOR_SCHEMA),
     CONF_TOTAL_POWER: ("Total Power", POWER_SENSOR_SCHEMA),
+    CONF_REACTIVE_POWER_L1: ("L1 Reactive Power", REACTIVE_POWER_SENSOR_SCHEMA),
+    CONF_REACTIVE_POWER_L2: ("L2 Reactive Power", REACTIVE_POWER_SENSOR_SCHEMA),
+    CONF_REACTIVE_POWER_L3: ("L3 Reactive Power", REACTIVE_POWER_SENSOR_SCHEMA),
+    CONF_TOTAL_REACTIVE_POWER: ("Total Reactive Power", REACTIVE_POWER_SENSOR_SCHEMA),
+    CONF_APPARENT_POWER_L1: ("L1 Apparent Power", APPARENT_POWER_SENSOR_SCHEMA),
+    CONF_APPARENT_POWER_L2: ("L2 Apparent Power", APPARENT_POWER_SENSOR_SCHEMA),
+    CONF_APPARENT_POWER_L3: ("L3 Apparent Power", APPARENT_POWER_SENSOR_SCHEMA),
+    CONF_TOTAL_APPARENT_POWER: ("Total Apparent Power", APPARENT_POWER_SENSOR_SCHEMA),
+    CONF_POWER_FACTOR_L1: ("L1 Power Factor", POWER_FACTOR_SENSOR_SCHEMA),
+    CONF_POWER_FACTOR_L2: ("L2 Power Factor", POWER_FACTOR_SENSOR_SCHEMA),
+    CONF_POWER_FACTOR_L3: ("L3 Power Factor", POWER_FACTOR_SENSOR_SCHEMA),
+    CONF_TOTAL_POWER_FACTOR: ("Total Power Factor", POWER_FACTOR_SENSOR_SCHEMA),
     CONF_FREQUENCY: ("Frequency", FREQUENCY_SENSOR_SCHEMA),
     CONF_WEBSOCKET_CONNECTED: ("WebSocket Status", BINARY_CONNECTIVITY_SCHEMA),
     CONF_DATA_VALID: ("WebSocket Data Valid", BINARY_DATA_VALID_SCHEMA),
@@ -191,6 +243,18 @@ SENSOR_SETTERS = {
     CONF_POWER_L2: "set_power_l2_sensor",
     CONF_POWER_L3: "set_power_l3_sensor",
     CONF_TOTAL_POWER: "set_total_power_sensor",
+    CONF_REACTIVE_POWER_L1: "set_reactive_power_l1_sensor",
+    CONF_REACTIVE_POWER_L2: "set_reactive_power_l2_sensor",
+    CONF_REACTIVE_POWER_L3: "set_reactive_power_l3_sensor",
+    CONF_TOTAL_REACTIVE_POWER: "set_total_reactive_power_sensor",
+    CONF_APPARENT_POWER_L1: "set_apparent_power_l1_sensor",
+    CONF_APPARENT_POWER_L2: "set_apparent_power_l2_sensor",
+    CONF_APPARENT_POWER_L3: "set_apparent_power_l3_sensor",
+    CONF_TOTAL_APPARENT_POWER: "set_total_apparent_power_sensor",
+    CONF_POWER_FACTOR_L1: "set_power_factor_l1_sensor",
+    CONF_POWER_FACTOR_L2: "set_power_factor_l2_sensor",
+    CONF_POWER_FACTOR_L3: "set_power_factor_l3_sensor",
+    CONF_TOTAL_POWER_FACTOR: "set_total_power_factor_sensor",
     CONF_FREQUENCY: "set_frequency_sensor",
     CONF_WEBSOCKET_CONNECTED: "set_websocket_connected_binary_sensor",
     CONF_DATA_VALID: "set_data_valid_binary_sensor",
@@ -262,6 +326,18 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_POWER_L2): POWER_SENSOR_SCHEMA,
             cv.Optional(CONF_POWER_L3): POWER_SENSOR_SCHEMA,
             cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_REACTIVE_POWER_L1): REACTIVE_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_REACTIVE_POWER_L2): REACTIVE_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_REACTIVE_POWER_L3): REACTIVE_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_TOTAL_REACTIVE_POWER): REACTIVE_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_APPARENT_POWER_L1): APPARENT_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_APPARENT_POWER_L2): APPARENT_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_APPARENT_POWER_L3): APPARENT_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_TOTAL_APPARENT_POWER): APPARENT_POWER_SENSOR_SCHEMA,
+            cv.Optional(CONF_POWER_FACTOR_L1): POWER_FACTOR_SENSOR_SCHEMA,
+            cv.Optional(CONF_POWER_FACTOR_L2): POWER_FACTOR_SENSOR_SCHEMA,
+            cv.Optional(CONF_POWER_FACTOR_L3): POWER_FACTOR_SENSOR_SCHEMA,
+            cv.Optional(CONF_TOTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
             cv.Optional(CONF_FREQUENCY): FREQUENCY_SENSOR_SCHEMA,
             cv.Optional(CONF_WEBSOCKET_CONNECTED): BINARY_CONNECTIVITY_SCHEMA,
             cv.Optional(CONF_DATA_VALID): BINARY_DATA_VALID_SCHEMA,

@@ -41,6 +41,8 @@ static float measurement_value_(MeasurementSource source, const MeterMeasurement
       return measurements.power[3];
     case MeasurementSource::TOTAL_POWER:
       return measurements.total_power;
+    case MeasurementSource::TOTAL_REACTIVE_POWER:
+      return measurements.total_reactive_power;
     case MeasurementSource::FREQUENCY:
       return measurements.frequency;
     case MeasurementSource::LINE_VOLTAGE_AB:
@@ -80,8 +82,9 @@ void write_float_registers(uint16_t register_start, const FloatRegisterDescripto
 
   for (size_t index = 0; index < descriptor_count; index++) {
     const auto &descriptor = descriptors[index];
-    write_float_abcd_(register_start, descriptor.address, measurement_value_(descriptor.source, measurements),
-                      registers, register_capacity);
+    write_float_abcd_(register_start, descriptor.address,
+                      measurement_value_(descriptor.source, measurements) * descriptor.multiplier, registers,
+                      register_capacity);
   }
 }
 

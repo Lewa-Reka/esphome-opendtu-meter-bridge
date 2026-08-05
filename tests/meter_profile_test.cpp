@@ -64,6 +64,7 @@ static meter::MeterMeasurements sample_measurements() {
   measurements.power[2] = -2000.0f;
   measurements.power[3] = -3000.0f;
   measurements.total_power = -6000.0f;
+  measurements.total_reactive_power = -100.0f;
   measurements.frequency = 50.0f;
   return measurements;
 }
@@ -128,30 +129,31 @@ static void test_dtsu666_golden_vector() {
   const auto measurements = sample_measurements();
   meter::encode_meter_profile(meter::MeterProfile::DTSU666, measurements, registers.data(), registers.size());
 
-  expect_word(registers[0x0006], 0x4366, "DTSU666 Ua 230 V high word is IEEE-754 ABCD");
-  expect_word(registers[0x0007], 0x0000, "DTSU666 Ua 230 V low word is IEEE-754 ABCD");
-  expect_word(registers[0x000C], 0x3FC0, "DTSU666 Ia is a positive RMS magnitude");
-  expect_word(registers[0x000D], 0x0000, "DTSU666 Ia low word matches the golden vector");
-  expect_word(registers[0x0012], 0xC5BB, "DTSU666 total export power remains directional");
-  expect_word(registers[0x0013], 0x8000, "DTSU666 total power low word matches the golden vector");
-  expect_word(registers[0x0014], 0xC47A, "DTSU666 phase export power remains directional");
-  expect_word(registers[0x0015], 0x0000, "DTSU666 phase power low word matches the golden vector");
-  expect_word(registers[0x0044], 0x4248, "DTSU666 50 Hz high word matches the golden vector");
-  expect_word(registers[0x0045], 0x0000, "DTSU666 50 Hz low word matches the golden vector");
-  expect_word(registers[0x001A], 0x0000, "Unimplemented DTSU666 reactive power is cleared to zero");
+  expect_float(decode_float_abcd(registers.data(), 0x0006), 2300.0f, 0.0001f,
+               "DTSU666 Ua uses the documented 0.1 V scale");
+  expect_float(decode_float_abcd(registers.data(), 0x000C), 1500.0f, 0.0001f,
+               "DTSU666 Ia uses the documented 0.001 A scale and RMS magnitude");
+  expect_float(decode_float_abcd(registers.data(), 0x0012), -60000.0f, 0.0001f,
+               "DTSU666 total active power uses the documented 0.1 W scale");
+  expect_float(decode_float_abcd(registers.data(), 0x0014), -10000.0f, 0.0001f,
+               "DTSU666 phase active power uses the documented 0.1 W scale");
+  expect_float(decode_float_abcd(registers.data(), 0x001A), -1000.0f, 0.0001f,
+               "DTSU666 Qt uses address 0x201A and the documented 0.1 var scale");
+  expect_float(decode_float_abcd(registers.data(), 0x0044), 5000.0f, 0.0001f,
+               "DTSU666 frequency uses the documented 0.01 Hz scale");
 
-  expect_float(decode_float_abcd(registers.data(), 0x000E), 2.25f, 0.0001f,
-               "DTSU666 Ib is a positive RMS magnitude");
-  expect_float(decode_float_abcd(registers.data(), 0x0010), 3.75f, 0.0001f,
-               "DTSU666 Ic is a positive RMS magnitude");
-  expect_float(decode_float_abcd(registers.data(), 0x0008), 231.0f, 0.0001f,
-               "DTSU666 Ub uses address 0x2008");
-  expect_float(decode_float_abcd(registers.data(), 0x000A), 232.0f, 0.0001f,
-               "DTSU666 Uc uses address 0x200A");
-  expect_float(decode_float_abcd(registers.data(), 0x0016), -2000.0f, 0.0001f,
-               "DTSU666 Pb uses address 0x2016");
-  expect_float(decode_float_abcd(registers.data(), 0x0018), -3000.0f, 0.0001f,
-               "DTSU666 Pc uses address 0x2018");
+  expect_float(decode_float_abcd(registers.data(), 0x000E), 2250.0f, 0.0001f,
+               "DTSU666 Ib uses the documented 0.001 A scale");
+  expect_float(decode_float_abcd(registers.data(), 0x0010), 3750.0f, 0.0001f,
+               "DTSU666 Ic uses the documented 0.001 A scale");
+  expect_float(decode_float_abcd(registers.data(), 0x0008), 2310.0f, 0.0001f,
+               "DTSU666 Ub uses address 0x2008 and the documented 0.1 V scale");
+  expect_float(decode_float_abcd(registers.data(), 0x000A), 2320.0f, 0.0001f,
+               "DTSU666 Uc uses address 0x200A and the documented 0.1 V scale");
+  expect_float(decode_float_abcd(registers.data(), 0x0016), -20000.0f, 0.0001f,
+               "DTSU666 Pb uses address 0x2016 and the documented 0.1 W scale");
+  expect_float(decode_float_abcd(registers.data(), 0x0018), -30000.0f, 0.0001f,
+               "DTSU666 Pc uses address 0x2018 and the documented 0.1 W scale");
 }
 
 static void test_dtsu666_line_voltage_formula() {
@@ -163,11 +165,11 @@ static void test_dtsu666_line_voltage_formula() {
   const float expected_bc = std::sqrt(231.0f * 231.0f + 232.0f * 232.0f + 231.0f * 232.0f);
   const float expected_ca = std::sqrt(232.0f * 232.0f + 230.0f * 230.0f + 232.0f * 230.0f);
 
-  expect_float(decode_float_abcd(registers.data(), 0x0000), expected_ab, 0.0001f,
+  expect_float(decode_float_abcd(registers.data(), 0x0000), expected_ab * 10.0f, 0.0001f,
                "DTSU666 Uab uses the 120-degree phase formula");
-  expect_float(decode_float_abcd(registers.data(), 0x0002), expected_bc, 0.0001f,
+  expect_float(decode_float_abcd(registers.data(), 0x0002), expected_bc * 10.0f, 0.0001f,
                "DTSU666 Ubc uses the 120-degree phase formula");
-  expect_float(decode_float_abcd(registers.data(), 0x0004), expected_ca, 0.0001f,
+  expect_float(decode_float_abcd(registers.data(), 0x0004), expected_ca * 10.0f, 0.0001f,
                "DTSU666 Uca uses the 120-degree phase formula");
 }
 
@@ -183,9 +185,9 @@ static void test_descriptor_bounds() {
   } guarded{0x1111, {0x2222, 0x3333}, 0x4444};
 
   const FloatRegisterDescriptor descriptors[] = {
-      {0x1FFE, MeasurementSource::VOLTAGE_L1},
-      {0x2001, MeasurementSource::VOLTAGE_L1},
-      {0x2002, MeasurementSource::FREQUENCY},
+      {0x1FFE, MeasurementSource::VOLTAGE_L1, 1.0f},
+      {0x2001, MeasurementSource::VOLTAGE_L1, 1.0f},
+      {0x2002, MeasurementSource::FREQUENCY, 1.0f},
   };
   const auto measurements = sample_measurements();
   write_float_registers(0x2000, descriptors, sizeof(descriptors) / sizeof(descriptors[0]), measurements,
@@ -198,8 +200,8 @@ static void test_descriptor_bounds() {
 
   std::array<uint16_t, 70> complete_window{};
   meter::profiles::write_dtsu666_profile(measurements, complete_window.data(), complete_window.size());
-  expect_word(complete_window[68], 0x4248, "DTSU666 frequency fits in a 70-register buffer");
-  expect_word(complete_window[69], 0x0000, "DTSU666 frequency uses the final register in its window");
+  expect_float(decode_float_abcd(complete_window.data(), 68), 5000.0f, 0.0001f,
+               "DTSU666 scaled frequency fits in a 70-register buffer");
 
   std::array<uint16_t, 69> short_window;
   short_window.fill(0xA5A5);

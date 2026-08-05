@@ -47,6 +47,8 @@ struct PhaseData {
   float voltage{0.0f};
   float current{0.0f};
   float power{0.0f};
+  float reactive_power{0.0f};
+  float apparent_power{0.0f};
   bool has_data{false};
 };
 
@@ -121,6 +123,12 @@ class OpenDtuMeterBridge : public Component
   float get_current(int phase);
   float get_power(int phase);
   float get_total_power();
+  float get_reactive_power(int phase);
+  float get_total_reactive_power();
+  float get_apparent_power(int phase);
+  float get_total_apparent_power();
+  float get_power_factor(int phase);
+  float get_total_power_factor();
   float get_frequency();
   bool is_data_valid();
   bool is_websocket_connected();
@@ -138,6 +146,18 @@ class OpenDtuMeterBridge : public Component
   void set_power_l2_sensor(sensor::Sensor *sensor) { this->power_l2_sensor_ = sensor; }
   void set_power_l3_sensor(sensor::Sensor *sensor) { this->power_l3_sensor_ = sensor; }
   void set_total_power_sensor(sensor::Sensor *sensor) { this->total_power_sensor_ = sensor; }
+  void set_reactive_power_l1_sensor(sensor::Sensor *sensor) { this->reactive_power_l1_sensor_ = sensor; }
+  void set_reactive_power_l2_sensor(sensor::Sensor *sensor) { this->reactive_power_l2_sensor_ = sensor; }
+  void set_reactive_power_l3_sensor(sensor::Sensor *sensor) { this->reactive_power_l3_sensor_ = sensor; }
+  void set_total_reactive_power_sensor(sensor::Sensor *sensor) { this->total_reactive_power_sensor_ = sensor; }
+  void set_apparent_power_l1_sensor(sensor::Sensor *sensor) { this->apparent_power_l1_sensor_ = sensor; }
+  void set_apparent_power_l2_sensor(sensor::Sensor *sensor) { this->apparent_power_l2_sensor_ = sensor; }
+  void set_apparent_power_l3_sensor(sensor::Sensor *sensor) { this->apparent_power_l3_sensor_ = sensor; }
+  void set_total_apparent_power_sensor(sensor::Sensor *sensor) { this->total_apparent_power_sensor_ = sensor; }
+  void set_power_factor_l1_sensor(sensor::Sensor *sensor) { this->power_factor_l1_sensor_ = sensor; }
+  void set_power_factor_l2_sensor(sensor::Sensor *sensor) { this->power_factor_l2_sensor_ = sensor; }
+  void set_power_factor_l3_sensor(sensor::Sensor *sensor) { this->power_factor_l3_sensor_ = sensor; }
+  void set_total_power_factor_sensor(sensor::Sensor *sensor) { this->total_power_factor_sensor_ = sensor; }
   void set_frequency_sensor(sensor::Sensor *sensor) { this->frequency_sensor_ = sensor; }
 #endif
 #ifdef USE_BINARY_SENSOR
@@ -237,6 +257,18 @@ class OpenDtuMeterBridge : public Component
   sensor::Sensor *power_l2_sensor_{nullptr};
   sensor::Sensor *power_l3_sensor_{nullptr};
   sensor::Sensor *total_power_sensor_{nullptr};
+  sensor::Sensor *reactive_power_l1_sensor_{nullptr};
+  sensor::Sensor *reactive_power_l2_sensor_{nullptr};
+  sensor::Sensor *reactive_power_l3_sensor_{nullptr};
+  sensor::Sensor *total_reactive_power_sensor_{nullptr};
+  sensor::Sensor *apparent_power_l1_sensor_{nullptr};
+  sensor::Sensor *apparent_power_l2_sensor_{nullptr};
+  sensor::Sensor *apparent_power_l3_sensor_{nullptr};
+  sensor::Sensor *total_apparent_power_sensor_{nullptr};
+  sensor::Sensor *power_factor_l1_sensor_{nullptr};
+  sensor::Sensor *power_factor_l2_sensor_{nullptr};
+  sensor::Sensor *power_factor_l3_sensor_{nullptr};
+  sensor::Sensor *total_power_factor_sensor_{nullptr};
   sensor::Sensor *frequency_sensor_{nullptr};
 #endif
 #ifdef USE_BINARY_SENSOR

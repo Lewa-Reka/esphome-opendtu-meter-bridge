@@ -23,6 +23,7 @@ enum class MeasurementSource : uint8_t {
   POWER_L2,
   POWER_L3,
   TOTAL_POWER,
+  TOTAL_REACTIVE_POWER,
   FREQUENCY,
   LINE_VOLTAGE_AB,
   LINE_VOLTAGE_BC,
@@ -32,6 +33,7 @@ enum class MeasurementSource : uint8_t {
 struct FloatRegisterDescriptor {
   uint16_t address;
   MeasurementSource source;
+  float multiplier{1.0f};
 };
 
 void write_float_registers(uint16_t register_start, const FloatRegisterDescriptor *descriptors,

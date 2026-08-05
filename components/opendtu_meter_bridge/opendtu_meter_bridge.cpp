@@ -32,6 +32,8 @@ struct PhaseAccumulator {
   uint8_t voltage_count{0};
   float current{0.0f};
   float power{0.0f};
+  float reactive_power{0.0f};
+  float apparent_power{0.0f};
   bool has_data{false};
 };
 
@@ -86,9 +88,14 @@ void OpenDtuMeterBridge::sync_modbus_registers_locked_() {
       measurements.current[ph] = this->modbus_current_power(this->phase_[ph].current, has);
       measurements.power[ph] = this->modbus_current_power(this->phase_[ph].power, has);
       measurements.total_power += measurements.power[ph];
+      measurements.total_reactive_power +=
+          this->modbus_current_power(this->phase_[ph].reactive_power, has);
     }
     if (!float_is_finite(measurements.total_power)) {
       measurements.total_power = 0.0f;
+    }
+    if (!float_is_finite(measurements.total_reactive_power)) {
+      measurements.total_reactive_power = 0.0f;
     }
     measurements.frequency = this->modbus_frequency(this->measured_frequency_, this->has_frequency_data_);
     encode_meter_profile(this->meter_profile_, measurements, this->modbus_regs_, METER_PROFILE_REGISTER_CAPACITY);
@@ -168,6 +175,42 @@ void OpenDtuMeterBridge::publish_state_() {
   }
   if (this->total_power_sensor_ != nullptr) {
     this->total_power_sensor_->publish_state(this->get_total_power());
+  }
+  if (this->reactive_power_l1_sensor_ != nullptr) {
+    this->reactive_power_l1_sensor_->publish_state(this->get_reactive_power(1));
+  }
+  if (this->reactive_power_l2_sensor_ != nullptr) {
+    this->reactive_power_l2_sensor_->publish_state(this->get_reactive_power(2));
+  }
+  if (this->reactive_power_l3_sensor_ != nullptr) {
+    this->reactive_power_l3_sensor_->publish_state(this->get_reactive_power(3));
+  }
+  if (this->total_reactive_power_sensor_ != nullptr) {
+    this->total_reactive_power_sensor_->publish_state(this->get_total_reactive_power());
+  }
+  if (this->apparent_power_l1_sensor_ != nullptr) {
+    this->apparent_power_l1_sensor_->publish_state(this->get_apparent_power(1));
+  }
+  if (this->apparent_power_l2_sensor_ != nullptr) {
+    this->apparent_power_l2_sensor_->publish_state(this->get_apparent_power(2));
+  }
+  if (this->apparent_power_l3_sensor_ != nullptr) {
+    this->apparent_power_l3_sensor_->publish_state(this->get_apparent_power(3));
+  }
+  if (this->total_apparent_power_sensor_ != nullptr) {
+    this->total_apparent_power_sensor_->publish_state(this->get_total_apparent_power());
+  }
+  if (this->power_factor_l1_sensor_ != nullptr) {
+    this->power_factor_l1_sensor_->publish_state(this->get_power_factor(1));
+  }
+  if (this->power_factor_l2_sensor_ != nullptr) {
+    this->power_factor_l2_sensor_->publish_state(this->get_power_factor(2));
+  }
+  if (this->power_factor_l3_sensor_ != nullptr) {
+    this->power_factor_l3_sensor_->publish_state(this->get_power_factor(3));
+  }
+  if (this->total_power_factor_sensor_ != nullptr) {
+    this->total_power_factor_sensor_->publish_state(this->get_total_power_factor());
   }
   if (this->frequency_sensor_ != nullptr) {
     this->frequency_sensor_->publish_state(this->get_frequency());
@@ -267,6 +310,8 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
     float voltage = this->json_field_v_(ac0, "Voltage");
     float current = this->json_field_v_(ac0, "Current");
     float power = this->json_field_v_(ac0, "Power");
+    float reactive_power = this->json_field_v_(ac0, "ReactivePower");
+    float power_factor = this->json_field_v_(ac0, "PowerFactor");
     float frequency = this->json_field_v_(ac0, "Frequency");
 
     if (float_is_finite(voltage) && voltage >= VOLTAGE_MIN_V && voltage <= VOLTAGE_MAX_V) {
@@ -275,6 +320,13 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
     }
     tmp[grid_phase].current += -current;
     tmp[grid_phase].power += -power;
+    tmp[grid_phase].reactive_power += -reactive_power;
+    const float apparent_power = std::fabs(power_factor) > 0.0001f && std::fabs(power_factor) <= 1.0f
+                                     ? std::fabs(power / power_factor)
+                                     : std::hypot(power, reactive_power);
+    if (float_is_finite(apparent_power)) {
+      tmp[grid_phase].apparent_power += apparent_power;
+    }
     tmp[grid_phase].has_data = true;
 
     if (float_is_finite(frequency) && frequency >= FREQUENCY_MIN_HZ && frequency <= FREQUENCY_MAX_HZ) {
@@ -287,6 +339,8 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
   for (int ph = 1; ph <= 3; ph++) {
     this->phase_[ph].current = tmp[ph].current;
     this->phase_[ph].power = tmp[ph].power;
+    this->phase_[ph].reactive_power = tmp[ph].reactive_power;
+    this->phase_[ph].apparent_power = tmp[ph].apparent_power;
     this->phase_[ph].has_data = tmp[ph].has_data;
     if (tmp[ph].voltage_count > 0) {
       this->phase_[ph].voltage = tmp[ph].voltage_sum / (float) tmp[ph].voltage_count;
@@ -318,11 +372,13 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
   float c3 = this->get_current(3);
   float p3 = this->get_power(3);
   float total = this->get_total_power();
+  float total_reactive = this->get_total_reactive_power();
 
   ESP_LOGI(TAG, "L1: %.1f V, %.2f A, %.1f W", v1, c1, p1);
   ESP_LOGI(TAG, "L2: %.1f V, %.2f A, %.1f W", v2, c2, p2);
   ESP_LOGI(TAG, "L3: %.1f V, %.2f A, %.1f W", v3, c3, p3);
   ESP_LOGI(TAG, "Total Power: %.1f W", total);
+  ESP_LOGI(TAG, "Total Reactive Power: %.1f var", total_reactive);
   ESP_LOGI(TAG, "Frequency: %.2f Hz", this->get_frequency());
 
   this->publish_state_();
@@ -596,6 +652,87 @@ float OpenDtuMeterBridge::get_total_power() {
     return 0.0f;
   }
   return total;
+}
+
+float OpenDtuMeterBridge::get_reactive_power(int phase) {
+  if (phase < 1 || phase > 3) {
+    return 0.0f;
+  }
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  float value = this->data_stale_
+                    ? 0.0f
+                    : this->modbus_current_power(this->phase_[phase].reactive_power, this->phase_[phase].has_data);
+  xSemaphoreGive(this->data_mutex_);
+  return value;
+}
+
+float OpenDtuMeterBridge::get_total_reactive_power() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  float total = 0.0f;
+  if (!this->data_stale_) {
+    for (int phase = 1; phase <= 3; phase++) {
+      total += this->modbus_current_power(this->phase_[phase].reactive_power, this->phase_[phase].has_data);
+    }
+  }
+  xSemaphoreGive(this->data_mutex_);
+  return float_is_finite(total) ? total : 0.0f;
+}
+
+float OpenDtuMeterBridge::get_apparent_power(int phase) {
+  if (phase < 1 || phase > 3) {
+    return 0.0f;
+  }
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  float value = this->data_stale_
+                    ? 0.0f
+                    : this->modbus_current_power(this->phase_[phase].apparent_power, this->phase_[phase].has_data);
+  xSemaphoreGive(this->data_mutex_);
+  return value;
+}
+
+float OpenDtuMeterBridge::get_total_apparent_power() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  float total = 0.0f;
+  if (!this->data_stale_) {
+    for (int phase = 1; phase <= 3; phase++) {
+      total += this->modbus_current_power(this->phase_[phase].apparent_power, this->phase_[phase].has_data);
+    }
+  }
+  xSemaphoreGive(this->data_mutex_);
+  return float_is_finite(total) ? total : 0.0f;
+}
+
+float OpenDtuMeterBridge::get_power_factor(int phase) {
+  if (phase < 1 || phase > 3) {
+    return 0.0f;
+  }
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  const bool valid = !this->data_stale_ && this->phase_[phase].has_data;
+  const float power = this->phase_[phase].power;
+  const float apparent_power = this->phase_[phase].apparent_power;
+  xSemaphoreGive(this->data_mutex_);
+  if (!valid || !float_is_finite(power) || !float_is_finite(apparent_power) || apparent_power <= 0.0001f) {
+    return 0.0f;
+  }
+  return std::fabs(power) / apparent_power;
+}
+
+float OpenDtuMeterBridge::get_total_power_factor() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  float total_power = 0.0f;
+  float total_apparent_power = 0.0f;
+  if (!this->data_stale_) {
+    for (int phase = 1; phase <= 3; phase++) {
+      total_power += this->modbus_current_power(this->phase_[phase].power, this->phase_[phase].has_data);
+      total_apparent_power +=
+          this->modbus_current_power(this->phase_[phase].apparent_power, this->phase_[phase].has_data);
+    }
+  }
+  xSemaphoreGive(this->data_mutex_);
+  if (!float_is_finite(total_power) || !float_is_finite(total_apparent_power) || total_apparent_power <= 0.0001f) {
+    return 0.0f;
+  }
+  return std::fabs(total_power) / total_apparent_power;
 }
 
 float OpenDtuMeterBridge::get_frequency() {

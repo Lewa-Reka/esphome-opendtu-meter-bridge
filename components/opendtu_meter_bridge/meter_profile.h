@@ -17,6 +17,7 @@ struct MeterMeasurements {
   float current[4]{};
   float power[4]{};
   float total_power{0.0f};
+  float total_reactive_power{0.0f};
   float frequency{0.0f};
 };
 

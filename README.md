@@ -66,10 +66,10 @@ flowchart TB
   bridge -->|Modbus RTU SDM630 or DTSU666| deye
 ```
 
-Each microinverter (**MI**) only needs radio reach to **OpenDTU**. The bridge sums per-phase active power and current from every mapped inverter and encodes the result using the selected meter profile.
+Each microinverter (**MI**) only needs radio reach to **OpenDTU**. The bridge sums per-phase active, reactive and apparent power plus current from every mapped inverter and encodes the result using the selected meter profile.
 
-- Parses OpenDTU livedata JSON (`inverters[].AC["0"]` → voltage, current, power, frequency)
-- Maps microinverters to grid phases via `microinverter_map` (several inverters can share a phase, current and power are summed)
+- Parses all electrical fields supplied by the OpenDTU AC channel (`inverters[].AC["0"]` → voltage, current, active power, reactive power, power factor and frequency)
+- Maps microinverters to grid phases via `microinverter_map` (several inverters can share a phase; current, active power, reactive power and apparent power are summed, voltage and frequency are averaged)
 - Inverts the OpenDTU generation sign for directional values: active power is negative for export in both profiles, SDM630 retains directional current for compatibility, and DTSU666 exposes positive RMS current as required by its register map
 - Serves the selected meter register window on `slave_address` (`0x02` for Deye Grid Tie Meter 2), silently ignoring Deye queries to `0x01` (main meter address)
 
@@ -191,7 +191,10 @@ opendtu_meter_bridge:
 When `publish_sensors: true` (default), the component registers:
 
 - L1/L2/L3 voltage, current, and power sensors
-- Total power and frequency sensors
+- L1/L2/L3 and total reactive-power sensors (`ReactivePower` from OpenDTU)
+- L1/L2/L3 and total apparent-power sensors (derived from OpenDTU active power and power factor)
+- L1/L2/L3 and total power-factor sensors (aggregated from active and apparent power)
+- Total active-power and frequency sensors
 - **WebSocket Status** and **WebSocket Data Valid** (diagnostic binary sensors)
 - **Board Restart** button and **Component Version** text sensor (diagnostic)
 
@@ -214,7 +217,7 @@ Measurements use IEEE-754 FP32 values in two consecutive 16-bit registers, with 
 
 Addresses inside the selected profile window that are not listed below return zero-filled registers. A request outside the selected window or one that crosses its end is rejected with Modbus exception **`0x02` (Illegal Data Address)**. A zero-length request or one exceeding 125 registers is rejected with **`0x03` (Illegal Data Value)**.
 
-Read requests are limited to the Modbus maximum of 125 registers. Active power keeps its direction: OpenDTU generation/export is exposed as a negative value. DTSU666 current registers expose the positive RMS magnitude defined by the CHINT map, while the SDM630 profile retains the legacy directional-current behavior for compatibility.
+Read requests are limited to the Modbus maximum of 125 registers. Active and reactive power keep their direction: OpenDTU generation/export is exposed as a negative value. DTSU666 current registers expose the positive RMS magnitude defined by the CHINT map, while the SDM630 profile retains the legacy directional-current behavior for compatibility.
 
 #### Eastron SDM630 (`meter_profile: sdm630`)
 
@@ -234,7 +237,7 @@ Read requests are limited to the Modbus maximum of 125 registers. Active power k
 
 #### CHINT DTSU666 (`meter_profile: dtsu666`)
 
-The DTSU666 profile implements the same measurement scope as the SDM630 profile. Line-to-line voltages are derived from the available phase-to-neutral voltages. Energy, reactive power, and power factor registers are not implemented.
+Line-to-line voltages are derived from the available phase-to-neutral voltages. The CHINT specification defines scaled IEEE-754 values for these instantaneous registers, unlike the direct engineering units used by SDM630: voltage, active power and reactive power are stored as physical value × `10`; current as × `1000`; and frequency as × `100`. The component applies these scales before encoding the Modbus response, so the Deye receives the physical value specified by the DTSU666 profile.
 
 | Address | Value |
 |---------|-------|
@@ -251,6 +254,7 @@ The DTSU666 profile implements the same measurement scope as the SDM630 profile.
 | 0x2014 | Active Power L1 [W] |
 | 0x2016 | Active Power L2 [W] |
 | 0x2018 | Active Power L3 [W] |
+| 0x201A | Total Reactive Power Qt [var] |
 | 0x2044 | Frequency [Hz] |
 
 ## secrets.yaml
