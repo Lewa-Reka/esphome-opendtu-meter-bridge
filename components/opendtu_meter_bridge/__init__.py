@@ -53,7 +53,7 @@ AUTO_LOAD = ["binary_sensor", "button", "modbus", "sensor", "text_sensor"]
 DEPENDENCIES = ["wifi"]
 CONFLICTS_WITH = ["opendtu_sdm630"]
 
-COMPONENT_VERSION = "0.3.0"
+COMPONENT_VERSION = "0.2.1"
 
 CONF_HOST = "host"
 CONF_PATH = "path"
