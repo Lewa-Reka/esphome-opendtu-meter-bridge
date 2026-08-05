@@ -69,6 +69,7 @@ flowchart TB
 Each microinverter (**MI**) only needs radio reach to **OpenDTU**. The bridge sums per-phase active, reactive and apparent power plus current from every mapped inverter and encodes the result using the selected meter profile.
 
 - Parses all electrical fields supplied by the OpenDTU AC channel (`inverters[].AC["0"]` → voltage, current, active power, reactive power, power factor and frequency)
+- Reads production, temperature and efficiency from each mapped inverter's `inverters[].INV["0"]` channel; the bridge does not use OpenDTU's global total, which can include unmapped inverters
 - Maps microinverters to grid phases via `microinverter_map` (several inverters can share a phase; current, active power, reactive power and apparent power are summed, voltage and frequency are averaged)
 - Inverts the OpenDTU generation sign for directional values: active power is negative for export in both profiles, SDM630 retains directional current for compatibility, and DTSU666 exposes positive RMS current as required by its register map
 - Serves the selected meter register window on `slave_address` (`0x02` for Deye Grid Tie Meter 2), silently ignoring Deye queries to `0x01` (main meter address)
@@ -194,6 +195,8 @@ When `publish_sensors: true` (default), the component registers:
 - L1/L2/L3 and total reactive-power sensors (`ReactivePower` from OpenDTU)
 - L1/L2/L3 and total apparent-power sensors (derived from OpenDTU active power and power factor)
 - L1/L2/L3 and total power-factor sensors (aggregated from active and apparent power)
+- Total production today [Wh] and total lifetime production [kWh], summed across mapped microinverters
+- Average mapped-inverter temperature and aggregate inverter efficiency
 - Total active-power and frequency sensors
 - **WebSocket Status** and **WebSocket Data Valid** (diagnostic binary sensors)
 - **Board Restart** button and **Component Version** text sensor (diagnostic)

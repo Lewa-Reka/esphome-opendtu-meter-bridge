@@ -6,6 +6,15 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- ESPHome sensors for daily and lifetime production, summed only across microinverters selected in `microinverter_map`.
+- ESPHome sensors for average mapped-inverter temperature and aggregate inverter efficiency.
+
+### Changed
+
+- Extended OpenDTU livedata parsing to consume `INV["0"]` production, temperature, efficiency, and DC-power fields in addition to the AC channel.
+
+### Added
+
 - Selectable `sdm630` and `dtsu666` meter profiles through `meter_profile`.
 - CHINT DTSU666 instantaneous voltage, current, active-power, and frequency register mapping based on the published CHINT Modbus specification.
 - Separate profile descriptor tables, a shared `meter_profile_codec`, and CI build configurations for SDM630 and DTSU666.

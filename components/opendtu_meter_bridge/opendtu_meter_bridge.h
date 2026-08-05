@@ -129,6 +129,10 @@ class OpenDtuMeterBridge : public Component
   float get_total_apparent_power();
   float get_power_factor(int phase);
   float get_total_power_factor();
+  float get_total_yield_day();
+  float get_total_yield_total();
+  float get_average_temperature();
+  float get_efficiency();
   float get_frequency();
   bool is_data_valid();
   bool is_websocket_connected();
@@ -158,6 +162,10 @@ class OpenDtuMeterBridge : public Component
   void set_power_factor_l2_sensor(sensor::Sensor *sensor) { this->power_factor_l2_sensor_ = sensor; }
   void set_power_factor_l3_sensor(sensor::Sensor *sensor) { this->power_factor_l3_sensor_ = sensor; }
   void set_total_power_factor_sensor(sensor::Sensor *sensor) { this->total_power_factor_sensor_ = sensor; }
+  void set_total_yield_day_sensor(sensor::Sensor *sensor) { this->total_yield_day_sensor_ = sensor; }
+  void set_total_yield_total_sensor(sensor::Sensor *sensor) { this->total_yield_total_sensor_ = sensor; }
+  void set_average_temperature_sensor(sensor::Sensor *sensor) { this->average_temperature_sensor_ = sensor; }
+  void set_efficiency_sensor(sensor::Sensor *sensor) { this->efficiency_sensor_ = sensor; }
   void set_frequency_sensor(sensor::Sensor *sensor) { this->frequency_sensor_ = sensor; }
 #endif
 #ifdef USE_BINARY_SENSOR
@@ -195,7 +203,7 @@ class OpenDtuMeterBridge : public Component
   void write_modbus_defaults_();
   void process_livedata_(const char *json, size_t len);
   void publish_state_();
-  float json_field_v_(const cJSON *ac0, const char *key);
+  bool json_field_v_(const cJSON *object, const char *key, float &value);
   int find_inverter_index_(const cJSON *inverters, const MicroinverterMapEntry &entry);
 
   bool ws_buf_ensure_(size_t needed);
@@ -218,6 +226,14 @@ class OpenDtuMeterBridge : public Component
 
   std::vector<MicroinverterMapEntry> microinverter_map_;
   PhaseData phase_[4];
+  float total_yield_day_{0.0f};
+  float total_yield_total_{0.0f};
+  float average_temperature_{0.0f};
+  float efficiency_{0.0f};
+  bool has_yield_day_data_{false};
+  bool has_yield_total_data_{false};
+  bool has_temperature_data_{false};
+  bool has_efficiency_data_{false};
   float measured_frequency_{0.0f};
   bool has_frequency_data_{false};
   uint16_t modbus_regs_[METER_PROFILE_REGISTER_CAPACITY]{};
@@ -269,6 +285,10 @@ class OpenDtuMeterBridge : public Component
   sensor::Sensor *power_factor_l2_sensor_{nullptr};
   sensor::Sensor *power_factor_l3_sensor_{nullptr};
   sensor::Sensor *total_power_factor_sensor_{nullptr};
+  sensor::Sensor *total_yield_day_sensor_{nullptr};
+  sensor::Sensor *total_yield_total_sensor_{nullptr};
+  sensor::Sensor *average_temperature_sensor_{nullptr};
+  sensor::Sensor *efficiency_sensor_{nullptr};
   sensor::Sensor *frequency_sensor_{nullptr};
 #endif
 #ifdef USE_BINARY_SENSOR

@@ -22,22 +22,30 @@ from esphome.const import (
     CONF_PORT,
     DEVICE_CLASS_CONNECTIVITY,
     DEVICE_CLASS_CURRENT,
+    DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_FREQUENCY,
     DEVICE_CLASS_APPARENT_POWER,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_POWER_FACTOR,
     DEVICE_CLASS_REACTIVE_POWER,
     DEVICE_CLASS_RESTART,
+    DEVICE_CLASS_TEMPERATURE,
     DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_DIAGNOSTIC,
     ICON_RESTART,
     STATE_CLASS_MEASUREMENT,
+    STATE_CLASS_TOTAL,
+    STATE_CLASS_TOTAL_INCREASING,
     UNIT_AMPERE,
+    UNIT_CELSIUS,
     UNIT_HERTZ,
+    UNIT_KILOWATT_HOURS,
+    UNIT_PERCENT,
     UNIT_VOLT,
     UNIT_VOLT_AMPS,
     UNIT_VOLT_AMPS_REACTIVE,
     UNIT_WATT,
+    UNIT_WATT_HOURS,
 )
 
 # ESPHome 2026.7 introduced the ModbusServer codegen type.  Earlier supported
@@ -53,7 +61,7 @@ AUTO_LOAD = ["binary_sensor", "button", "modbus", "sensor", "text_sensor"]
 DEPENDENCIES = ["wifi"]
 CONFLICTS_WITH = ["opendtu_sdm630"]
 
-COMPONENT_VERSION = "0.2.1"
+COMPONENT_VERSION = "0.2.2"
 
 CONF_HOST = "host"
 CONF_PATH = "path"
@@ -94,6 +102,10 @@ CONF_POWER_FACTOR_L1 = "power_factor_l1"
 CONF_POWER_FACTOR_L2 = "power_factor_l2"
 CONF_POWER_FACTOR_L3 = "power_factor_l3"
 CONF_TOTAL_POWER_FACTOR = "total_power_factor"
+CONF_TOTAL_YIELD_DAY = "total_yield_day"
+CONF_TOTAL_YIELD_TOTAL = "total_yield_total"
+CONF_AVERAGE_TEMPERATURE = "average_temperature"
+CONF_EFFICIENCY = "efficiency"
 CONF_FREQUENCY = "frequency"
 CONF_WEBSOCKET_CONNECTED = "websocket_connected"
 CONF_DATA_VALID = "data_valid"
@@ -175,6 +187,37 @@ POWER_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
     state_class=STATE_CLASS_MEASUREMENT,
 )
 
+YIELD_DAY_SENSOR_SCHEMA = sensor.sensor_schema(
+    sensor.Sensor,
+    unit_of_measurement=UNIT_WATT_HOURS,
+    device_class=DEVICE_CLASS_ENERGY,
+    accuracy_decimals=0,
+    state_class=STATE_CLASS_TOTAL,
+)
+
+YIELD_TOTAL_SENSOR_SCHEMA = sensor.sensor_schema(
+    sensor.Sensor,
+    unit_of_measurement=UNIT_KILOWATT_HOURS,
+    device_class=DEVICE_CLASS_ENERGY,
+    accuracy_decimals=3,
+    state_class=STATE_CLASS_TOTAL_INCREASING,
+)
+
+TEMPERATURE_SENSOR_SCHEMA = sensor.sensor_schema(
+    sensor.Sensor,
+    unit_of_measurement=UNIT_CELSIUS,
+    device_class=DEVICE_CLASS_TEMPERATURE,
+    accuracy_decimals=1,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+
+EFFICIENCY_SENSOR_SCHEMA = sensor.sensor_schema(
+    sensor.Sensor,
+    unit_of_measurement=UNIT_PERCENT,
+    accuracy_decimals=1,
+    state_class=STATE_CLASS_MEASUREMENT,
+)
+
 FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
     sensor.Sensor,
     unit_of_measurement=UNIT_HERTZ,
@@ -227,6 +270,10 @@ SENSOR_DEFAULTS = {
     CONF_POWER_FACTOR_L2: ("L2 Power Factor", POWER_FACTOR_SENSOR_SCHEMA),
     CONF_POWER_FACTOR_L3: ("L3 Power Factor", POWER_FACTOR_SENSOR_SCHEMA),
     CONF_TOTAL_POWER_FACTOR: ("Total Power Factor", POWER_FACTOR_SENSOR_SCHEMA),
+    CONF_TOTAL_YIELD_DAY: ("Total Yield Today", YIELD_DAY_SENSOR_SCHEMA),
+    CONF_TOTAL_YIELD_TOTAL: ("Total Yield", YIELD_TOTAL_SENSOR_SCHEMA),
+    CONF_AVERAGE_TEMPERATURE: ("Average Inverter Temperature", TEMPERATURE_SENSOR_SCHEMA),
+    CONF_EFFICIENCY: ("Inverter Efficiency", EFFICIENCY_SENSOR_SCHEMA),
     CONF_FREQUENCY: ("Frequency", FREQUENCY_SENSOR_SCHEMA),
     CONF_WEBSOCKET_CONNECTED: ("WebSocket Status", BINARY_CONNECTIVITY_SCHEMA),
     CONF_DATA_VALID: ("WebSocket Data Valid", BINARY_DATA_VALID_SCHEMA),
@@ -255,6 +302,10 @@ SENSOR_SETTERS = {
     CONF_POWER_FACTOR_L2: "set_power_factor_l2_sensor",
     CONF_POWER_FACTOR_L3: "set_power_factor_l3_sensor",
     CONF_TOTAL_POWER_FACTOR: "set_total_power_factor_sensor",
+    CONF_TOTAL_YIELD_DAY: "set_total_yield_day_sensor",
+    CONF_TOTAL_YIELD_TOTAL: "set_total_yield_total_sensor",
+    CONF_AVERAGE_TEMPERATURE: "set_average_temperature_sensor",
+    CONF_EFFICIENCY: "set_efficiency_sensor",
     CONF_FREQUENCY: "set_frequency_sensor",
     CONF_WEBSOCKET_CONNECTED: "set_websocket_connected_binary_sensor",
     CONF_DATA_VALID: "set_data_valid_binary_sensor",
@@ -338,6 +389,10 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_POWER_FACTOR_L2): POWER_FACTOR_SENSOR_SCHEMA,
             cv.Optional(CONF_POWER_FACTOR_L3): POWER_FACTOR_SENSOR_SCHEMA,
             cv.Optional(CONF_TOTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+            cv.Optional(CONF_TOTAL_YIELD_DAY): YIELD_DAY_SENSOR_SCHEMA,
+            cv.Optional(CONF_TOTAL_YIELD_TOTAL): YIELD_TOTAL_SENSOR_SCHEMA,
+            cv.Optional(CONF_AVERAGE_TEMPERATURE): TEMPERATURE_SENSOR_SCHEMA,
+            cv.Optional(CONF_EFFICIENCY): EFFICIENCY_SENSOR_SCHEMA,
             cv.Optional(CONF_FREQUENCY): FREQUENCY_SENSOR_SCHEMA,
             cv.Optional(CONF_WEBSOCKET_CONNECTED): BINARY_CONNECTIVITY_SCHEMA,
             cv.Optional(CONF_DATA_VALID): BINARY_DATA_VALID_SCHEMA,

@@ -139,6 +139,14 @@ void OpenDtuMeterBridge::mark_data_stale_and_reset_() {
   }
   this->measured_frequency_ = 0.0f;
   this->has_frequency_data_ = false;
+  this->total_yield_day_ = 0.0f;
+  this->total_yield_total_ = 0.0f;
+  this->average_temperature_ = 0.0f;
+  this->efficiency_ = 0.0f;
+  this->has_yield_day_data_ = false;
+  this->has_yield_total_data_ = false;
+  this->has_temperature_data_ = false;
+  this->has_efficiency_data_ = false;
   this->sync_modbus_registers_locked_();
   xSemaphoreGive(this->data_mutex_);
   this->publish_state_();
@@ -212,6 +220,18 @@ void OpenDtuMeterBridge::publish_state_() {
   if (this->total_power_factor_sensor_ != nullptr) {
     this->total_power_factor_sensor_->publish_state(this->get_total_power_factor());
   }
+  if (this->total_yield_day_sensor_ != nullptr) {
+    this->total_yield_day_sensor_->publish_state(this->get_total_yield_day());
+  }
+  if (this->total_yield_total_sensor_ != nullptr) {
+    this->total_yield_total_sensor_->publish_state(this->get_total_yield_total());
+  }
+  if (this->average_temperature_sensor_ != nullptr) {
+    this->average_temperature_sensor_->publish_state(this->get_average_temperature());
+  }
+  if (this->efficiency_sensor_ != nullptr) {
+    this->efficiency_sensor_->publish_state(this->get_efficiency());
+  }
   if (this->frequency_sensor_ != nullptr) {
     this->frequency_sensor_->publish_state(this->get_frequency());
   }
@@ -226,17 +246,21 @@ void OpenDtuMeterBridge::publish_state_() {
 #endif
 }
 
-float OpenDtuMeterBridge::json_field_v_(const cJSON *ac0, const char *key) {
-  const cJSON *field = cJSON_GetObjectItemCaseSensitive(ac0, key);
+bool OpenDtuMeterBridge::json_field_v_(const cJSON *object, const char *key, float &value) {
+  value = 0.0f;
+  const cJSON *field = cJSON_GetObjectItemCaseSensitive(object, key);
   if (field == nullptr) {
-    return 0.0f;
+    return false;
   }
   const cJSON *v = cJSON_GetObjectItemCaseSensitive(field, "v");
   if (cJSON_IsNumber(v)) {
     float out = (float) v->valuedouble;
-    return float_is_finite(out) ? out : 0.0f;
+    if (float_is_finite(out)) {
+      value = out;
+      return true;
+    }
   }
-  return 0.0f;
+  return false;
 }
 
 int OpenDtuMeterBridge::find_inverter_index_(const cJSON *inverters, const MicroinverterMapEntry &entry) {
@@ -279,6 +303,16 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
   PhaseAccumulator tmp[4] = {};
   float frequency_sum = 0.0f;
   uint8_t frequency_count = 0;
+  float yield_day_total = 0.0f;
+  float yield_total_total = 0.0f;
+  float temperature_sum = 0.0f;
+  uint8_t temperature_count = 0;
+  float dc_power_total = 0.0f;
+  float ac_power_total = 0.0f;
+  float efficiency_sum = 0.0f;
+  uint8_t efficiency_count = 0;
+  bool has_yield_day = false;
+  bool has_yield_total = false;
 
   for (const auto &entry : this->microinverter_map_) {
     uint8_t grid_phase = entry.grid_phase;
@@ -307,12 +341,18 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
       continue;
     }
 
-    float voltage = this->json_field_v_(ac0, "Voltage");
-    float current = this->json_field_v_(ac0, "Current");
-    float power = this->json_field_v_(ac0, "Power");
-    float reactive_power = this->json_field_v_(ac0, "ReactivePower");
-    float power_factor = this->json_field_v_(ac0, "PowerFactor");
-    float frequency = this->json_field_v_(ac0, "Frequency");
+    float voltage = 0.0f;
+    float current = 0.0f;
+    float power = 0.0f;
+    float reactive_power = 0.0f;
+    float power_factor = 0.0f;
+    float frequency = 0.0f;
+    this->json_field_v_(ac0, "Voltage", voltage);
+    this->json_field_v_(ac0, "Current", current);
+    const bool has_power = this->json_field_v_(ac0, "Power", power);
+    this->json_field_v_(ac0, "ReactivePower", reactive_power);
+    this->json_field_v_(ac0, "PowerFactor", power_factor);
+    this->json_field_v_(ac0, "Frequency", frequency);
 
     if (float_is_finite(voltage) && voltage >= VOLTAGE_MIN_V && voltage <= VOLTAGE_MAX_V) {
       tmp[grid_phase].voltage_sum += voltage;
@@ -332,6 +372,36 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
     if (float_is_finite(frequency) && frequency >= FREQUENCY_MIN_HZ && frequency <= FREQUENCY_MAX_HZ) {
       frequency_sum += frequency;
       frequency_count++;
+    }
+
+    cJSON *inverter = cJSON_GetObjectItemCaseSensitive(inv, "INV");
+    cJSON *inverter0 = (inverter != nullptr) ? cJSON_GetObjectItemCaseSensitive(inverter, "0") : nullptr;
+    if (inverter0 == nullptr) {
+      continue;
+    }
+
+    float value = 0.0f;
+    if (this->json_field_v_(inverter0, "YieldDay", value)) {
+      yield_day_total += value;
+      has_yield_day = true;
+    }
+    if (this->json_field_v_(inverter0, "YieldTotal", value)) {
+      yield_total_total += value;
+      has_yield_total = true;
+    }
+    if (this->json_field_v_(inverter0, "Temperature", value)) {
+      temperature_sum += value;
+      temperature_count++;
+    }
+    if (this->json_field_v_(inverter0, "Efficiency", value)) {
+      efficiency_sum += value;
+      efficiency_count++;
+    }
+    if (has_power) {
+      ac_power_total += std::fabs(power);
+    }
+    if (this->json_field_v_(inverter0, "Power DC", value) && value > 0.0f) {
+      dc_power_total += value;
     }
   }
 
@@ -355,6 +425,24 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
     this->measured_frequency_ = 0.0f;
     this->has_frequency_data_ = false;
   }
+  this->total_yield_day_ = has_yield_day && float_is_finite(yield_day_total) ? yield_day_total : 0.0f;
+  this->total_yield_total_ = has_yield_total && float_is_finite(yield_total_total) ? yield_total_total : 0.0f;
+  this->average_temperature_ = temperature_count > 0 && float_is_finite(temperature_sum)
+                                   ? temperature_sum / (float) temperature_count
+                                   : 0.0f;
+  if (dc_power_total > 0.0f && float_is_finite(ac_power_total) && float_is_finite(dc_power_total)) {
+    this->efficiency_ = ac_power_total / dc_power_total * 100.0f;
+    this->has_efficiency_data_ = float_is_finite(this->efficiency_);
+  } else if (efficiency_count > 0 && float_is_finite(efficiency_sum)) {
+    this->efficiency_ = efficiency_sum / (float) efficiency_count;
+    this->has_efficiency_data_ = true;
+  } else {
+    this->efficiency_ = 0.0f;
+    this->has_efficiency_data_ = false;
+  }
+  this->has_yield_day_data_ = has_yield_day && float_is_finite(this->total_yield_day_);
+  this->has_yield_total_data_ = has_yield_total && float_is_finite(this->total_yield_total_);
+  this->has_temperature_data_ = temperature_count > 0 && float_is_finite(this->average_temperature_);
   this->last_data_us_ = esp_timer_get_time();
   this->data_stale_ = false;
   this->sync_modbus_registers_locked_();
@@ -733,6 +821,34 @@ float OpenDtuMeterBridge::get_total_power_factor() {
     return 0.0f;
   }
   return std::fabs(total_power) / total_apparent_power;
+}
+
+float OpenDtuMeterBridge::get_total_yield_day() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  const float value = !this->data_stale_ && this->has_yield_day_data_ ? this->total_yield_day_ : 0.0f;
+  xSemaphoreGive(this->data_mutex_);
+  return float_is_finite(value) ? value : 0.0f;
+}
+
+float OpenDtuMeterBridge::get_total_yield_total() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  const float value = !this->data_stale_ && this->has_yield_total_data_ ? this->total_yield_total_ : 0.0f;
+  xSemaphoreGive(this->data_mutex_);
+  return float_is_finite(value) ? value : 0.0f;
+}
+
+float OpenDtuMeterBridge::get_average_temperature() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  const float value = !this->data_stale_ && this->has_temperature_data_ ? this->average_temperature_ : 0.0f;
+  xSemaphoreGive(this->data_mutex_);
+  return float_is_finite(value) ? value : 0.0f;
+}
+
+float OpenDtuMeterBridge::get_efficiency() {
+  xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
+  const float value = !this->data_stale_ && this->has_efficiency_data_ ? this->efficiency_ : 0.0f;
+  xSemaphoreGive(this->data_mutex_);
+  return float_is_finite(value) ? value : 0.0f;
 }
 
 float OpenDtuMeterBridge::get_frequency() {
