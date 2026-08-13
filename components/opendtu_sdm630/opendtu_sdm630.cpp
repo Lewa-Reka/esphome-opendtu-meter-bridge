@@ -28,7 +28,6 @@ static constexpr uint16_t REG_POWER_L2 = 0x000E;
 static constexpr uint16_t REG_POWER_L3 = 0x0010;
 static constexpr uint16_t REG_POWER_TOTAL = 0x0034;
 static constexpr uint16_t REG_FREQUENCY = 0x0046;
-static constexpr uint8_t SDM630_FACTORY_SLAVE_ADDRESS = 0x01;
 
 static constexpr float VOLTAGE_MIN_V = 100.0f;
 static constexpr float VOLTAGE_MAX_V = 300.0f;
@@ -528,37 +527,24 @@ float OpenDtuSdm630::get_frequency() {
 
 bool OpenDtuSdm630::is_data_valid() { return !this->data_stale_ && this->ws_connected_; }
 
-void OpenDtuSdm630ModbusServer::on_modbus_read_registers(uint8_t function_code, uint16_t start_address,
-                                                         uint16_t number_of_registers) {
-  if (function_code != 0x03 && function_code != 0x04) {
-    return;
-  }
+modbus::ResponseStatus OpenDtuSdm630ModbusServer::on_read_registers(uint16_t start_address,
+                                                                    uint16_t number_of_registers,
+                                                                    modbus::RegisterValues &registers) {
   if (this->bridge_ == nullptr) {
-    return;
+    return modbus::ModbusExceptionCode::SERVICE_DEVICE_FAILURE;
   }
-
-  std::vector<uint8_t> response;
-  response.reserve(number_of_registers * 2);
 
   for (uint16_t offset = 0; offset < number_of_registers; offset++) {
     uint32_t address = (uint32_t) start_address + offset;
     if (address >= OpenDtuSdm630::MODBUS_REG_COUNT) {
-      std::vector<uint8_t> error_response;
-      error_response.push_back(this->address_);
-      error_response.push_back(function_code | 0x80);
-      error_response.push_back(0x02);
-      this->send_raw(error_response);
-      return;
+      return modbus::ModbusExceptionCode::ILLEGAL_DATA_ADDRESS;
     }
-    uint16_t value = this->bridge_->get_modbus_register((uint16_t) address);
-    response.push_back((uint8_t) (value >> 8));
-    response.push_back((uint8_t) (value & 0xFFu));
+    registers.push_back(this->bridge_->get_modbus_register((uint16_t) address));
   }
-
-  this->send(function_code, start_address, number_of_registers, response.size(), response.data());
+  return {};
 }
 
-void OpenDtuSdm630::set_modbus_server(modbus::Modbus *parent, uint8_t slave_address) {
+void OpenDtuSdm630::set_modbus_server(modbus::ModbusServerHub *parent, uint8_t slave_address) {
   this->modbus_parent_ = parent;
   this->modbus_slave_address_ = slave_address;
 }
@@ -568,17 +554,10 @@ void OpenDtuSdm630::setup() {
   this->sync_modbus_registers_();
   if (this->modbus_parent_ != nullptr && this->modbus_slave_address_ != 0) {
     this->modbus_server_device_.set_bridge(this);
-    this->modbus_server_device_.set_parent(this->modbus_parent_);
     this->modbus_server_device_.set_address(this->modbus_slave_address_);
     this->modbus_parent_->register_device(&this->modbus_server_device_);
-
-    if (this->modbus_slave_address_ != SDM630_FACTORY_SLAVE_ADDRESS) {
-      this->modbus_silence_device_.set_parent(this->modbus_parent_);
-      this->modbus_silence_device_.set_address(SDM630_FACTORY_SLAVE_ADDRESS);
-      this->modbus_parent_->register_device(&this->modbus_silence_device_);
-    }
   }
-#ifdef USE_WIFI_LISTENERS
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
   wifi::global_wifi_component->add_connect_state_listener(this);
 #endif
   this->publish_state_();
@@ -589,8 +568,8 @@ void OpenDtuSdm630::setup() {
 #endif
 }
 
-#ifdef USE_WIFI_LISTENERS
-void OpenDtuSdm630::on_wifi_connect_state(const std::string &ssid, const wifi::bssid_t &bssid) {
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
+void OpenDtuSdm630::on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6> bssid) {
   if (ssid.empty()) {
     ESP_LOGW(TAG, "WiFi disconnected, stopping WebSocket client");
     this->stop_websocket_();

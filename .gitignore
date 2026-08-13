@@ -1,4 +1,5 @@
 /.esphome/
+/.venv/
 /secrets.yaml
 /tests/secrets.yaml
 

@@ -66,7 +66,7 @@ substitutions:
 esphome:
   name: ${device_name}
   friendly_name: OpenDTU to SDM630
-  min_version: "2025.6.0"
+  min_version: "2026.7.0"
   name_add_mac_suffix: true
 
 esp32:
