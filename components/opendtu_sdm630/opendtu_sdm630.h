@@ -5,6 +5,7 @@
 #include "esphome/core/defines.h"
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/string_ref.h"
 #include "esphome/components/modbus/modbus.h"
 #ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -28,6 +29,7 @@
 #include <freertos/semphr.h>
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -48,25 +50,18 @@ struct PhaseData {
 
 class OpenDtuSdm630;
 
-class OpenDtuSdm630ModbusServer : public modbus::ModbusDevice {
+class OpenDtuSdm630ModbusServer : public modbus::ModbusServerDevice {
  public:
   void set_bridge(OpenDtuSdm630 *bridge) { this->bridge_ = bridge; }
-  void on_modbus_data(const std::vector<uint8_t> &data) override {}
-  void on_modbus_read_registers(uint8_t function_code, uint16_t start_address,
-                                uint16_t number_of_registers) override;
+  modbus::ResponseStatus on_read_registers(uint16_t start_address, uint16_t number_of_registers,
+                                           modbus::RegisterValues &registers) override;
 
  protected:
   OpenDtuSdm630 *bridge_{nullptr};
 };
 
-// Swallows frames at factory address 0x01 to suppress unknown-address logs.
-class ModbusSilenceDevice : public modbus::ModbusDevice {
- public:
-  void on_modbus_data(const std::vector<uint8_t> &data) override {}
-};
-
 class OpenDtuSdm630 : public Component
-#ifdef USE_WIFI_LISTENERS
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
     ,
                       public wifi::WiFiConnectStateListener
 #endif
@@ -81,7 +76,7 @@ class OpenDtuSdm630 : public Component
   void set_default_voltage(float value) { this->default_voltage_ = value; }
   void set_default_frequency(float value) { this->default_frequency_ = value; }
   void set_component_version(const std::string &version) { this->component_version_ = version; }
-  void set_modbus_server(modbus::Modbus *parent, uint8_t slave_address);
+  void set_modbus_server(modbus::ModbusServerHub *parent, uint8_t slave_address);
   void add_microinverter_map_by_serial(const std::string &inverter_serial, uint8_t grid_phase);
   void add_microinverter_map_by_name(const std::string &inverter_name, uint8_t grid_phase);
 
@@ -128,8 +123,8 @@ class OpenDtuSdm630 : public Component
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
-#ifdef USE_WIFI_LISTENERS
-  void on_wifi_connect_state(const std::string &ssid, const wifi::bssid_t &bssid) override;
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
+  void on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6> bssid) override;
 #endif
 
  protected:
@@ -178,10 +173,9 @@ class OpenDtuSdm630 : public Component
   volatile int64_t last_data_us_{0};
   volatile bool data_stale_{true};
 
-  modbus::Modbus *modbus_parent_{nullptr};
+  modbus::ModbusServerHub *modbus_parent_{nullptr};
   uint8_t modbus_slave_address_{0};
   OpenDtuSdm630ModbusServer modbus_server_device_{};
-  ModbusSilenceDevice modbus_silence_device_{};
 
 #ifdef USE_SENSOR
   sensor::Sensor *voltage_l1_sensor_{nullptr};

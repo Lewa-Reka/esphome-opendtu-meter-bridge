@@ -4,7 +4,7 @@ from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, button, esp32, modbus, sensor, text_sensor
+from esphome.components import binary_sensor, button, esp32, modbus, sensor, text_sensor, wifi
 from esphome.components.modbus import CONF_MODBUS_ID
 from esphome.const import (
     CONF_ID,
@@ -192,7 +192,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PATH, default="/livedata"): cv.string,
             cv.Optional(CONF_USERNAME, default="admin"): cv.string,
             cv.Required(CONF_PASSWORD): cv.string,
-            cv.Required(CONF_MODBUS_ID): cv.use_id(modbus.Modbus),
+            cv.Required(CONF_MODBUS_ID): cv.use_id(modbus.ModbusServer),
             cv.Optional(CONF_SLAVE_ADDRESS, default=0x02): cv.hex_uint8_t,
             cv.Optional(CONF_DATA_TIMEOUT, default="15s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_DEFAULT_VOLTAGE, default=230.0): cv.float_,
@@ -281,4 +281,5 @@ async def to_code(config):
         version_ts = await text_sensor.new_text_sensor(config[CONF_COMPONENT_VERSION])
         cg.add(var.set_component_version_text_sensor(version_ts))
 
+    wifi.request_wifi_connect_state_listener()
     _register_idf_components()

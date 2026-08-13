@@ -80,7 +80,7 @@ Each microinverter (**MI**) only needs radio reach to **OpenDTU**. The bridge su
 - [OpenDTU](https://github.com/tbnobody/OpenDTU) running and reachable on your network (WebSocket `/livedata`, dashboard password), with **single-phase Hoymiles** microinverters
 - A **second ESP32** for this bridge (separate from the OpenDTU ESP32 in the tested setup)
 - RS485-to-TTL converter (no DE/RE pin required in the tested setup)
-- ESPHome **≥ 2025.6.0**
+- ESPHome **≥ 2026.7.0**
 - **Modbus master** (e.g. Deye hybrid inverter with Grid Tie Meter 2 / Eastron type) reading **Eastron SDM630** over Modbus RTU (**9600 8N1**)
 - **Home Assistant is not required** - ESPHome alone is enough to build, flash, and run this component
 
