@@ -47,11 +47,11 @@ from esphome.const import (
     UNIT_WATT,
     UNIT_WATT_HOURS,
 )
+from esphome.yaml_util import load_yaml
 
 # ESPHome 2026.7 introduced the ModbusServer codegen type.  Earlier supported
 # versions expose the same server configuration through Modbus.
 MODBUS_SERVER_CLASS = getattr(modbus, "ModbusServer", modbus.Modbus)
-from esphome.yaml_util import load_yaml
 
 _IDF_COMPONENTS_YML = Path(__file__).with_name("idf_component.yml")
 
