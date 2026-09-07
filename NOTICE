@@ -19,7 +19,7 @@ This project provides an ESPHome external component that bridges OpenDTU
 microinverter data to selectable Modbus RTU Eastron SDM630 and CHINT DTSU666
 register profiles.
 
-Project Repository: https://github.com/Lewa-Reka/esphome-opendtu-to-sdm630
+Project Repository: https://github.com/Lewa-Reka/esphome-opendtu-meter-bridge
 
 ================================================================================
 This project is built upon the ESPHome platform.

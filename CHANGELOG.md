@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+## v0.1.0 - 2026-09-07
+
 ### Added
 
 - ESPHome sensors for daily and lifetime production, summed only across microinverters selected in `microinverter_map`.
