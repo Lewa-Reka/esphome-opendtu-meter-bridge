@@ -1,6 +1,6 @@
 external_components:
   # @main follows development; pin a reviewed release tag or commit for reproducible builds.
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  - source: github://Lewa-Reka/esphome-opendtu-meter-bridge@main
     components: [opendtu_meter_bridge]
 
 opendtu_meter_bridge:
