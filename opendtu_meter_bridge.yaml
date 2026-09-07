@@ -1,12 +1,15 @@
 external_components:
+  # @main follows development; pin a reviewed release tag or commit for reproducible builds.
   - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
-    components: [opendtu_sdm630]
+    components: [opendtu_meter_bridge]
 
-opendtu_sdm630:
+opendtu_meter_bridge:
   id: opendtu
   host: 192.168.1.50
   password: !secret opendtu_password
   modbus_id: modbus_1
+  # Select the emulated meter: sdm630 (Eastron SDM630) or dtsu666 (CHINT DTSU666).
+  meter_profile: sdm630
   slave_address: 0x02
   microinverter_map:
     - name: "Garage-HMS-2000-4T"
@@ -61,15 +64,16 @@ text_sensor:
 # ------------------------------------------------------------
 
 substitutions:
-  device_name: opendtu-sdm630
+  device_name: opendtu-meter-bridge
 
 esphome:
   name: ${device_name}
-  friendly_name: OpenDTU to SDM630
-  min_version: "2026.7.0"
+  friendly_name: OpenDTU Meter Bridge
+  min_version: "2025.6.3"
   name_add_mac_suffix: true
 
 esp32:
+  board: esp32dev
   variant: esp32
   framework:
     type: esp-idf

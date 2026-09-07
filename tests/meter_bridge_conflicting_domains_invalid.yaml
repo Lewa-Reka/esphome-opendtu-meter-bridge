@@ -1,14 +1,25 @@
 substitutions:
-  device_name: opendtu-sdm630-ci
+  device_name: meter-bridge-domain-conflict-invalid
 
 external_components:
   - source:
       type: local
       path: ../components
-    components: [opendtu_sdm630]
+    components: [opendtu_meter_bridge, opendtu_sdm630]
+
+opendtu_meter_bridge:
+  id: neutral_bridge
+  host: 192.168.1.50
+  password: !secret opendtu_password
+  modbus_id: modbus_1
+  # Valid values are sdm630 or dtsu666; this domain must not coexist with the legacy one.
+  meter_profile: sdm630
+  microinverter_map:
+    - name: test-inverter
+      grid_phase: 1
 
 opendtu_sdm630:
-  id: opendtu
+  id: legacy_bridge
   host: 192.168.1.50
   password: !secret opendtu_password
   modbus_id: modbus_1
@@ -18,9 +29,10 @@ opendtu_sdm630:
 
 esphome:
   name: ${device_name}
-  min_version: "2026.7.0"
+  min_version: "2025.6.3"
 
 esp32:
+  board: esp32dev
   variant: esp32
   framework:
     type: esp-idf
