@@ -17,9 +17,9 @@ limitations under the License.
 -->
 
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=for-the-badge)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lewa-Reka/esphome-opendtu-to-sdm630/build-ci.yaml?style=for-the-badge)
-![GitHub License](https://img.shields.io/github/license/Lewa-Reka/esphome-opendtu-to-sdm630?style=for-the-badge)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/y/Lewa-Reka/esphome-opendtu-to-sdm630?style=for-the-badge)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Lewa-Reka/esphome-opendtu-meter-bridge/build-ci.yaml?style=for-the-badge)
+![GitHub License](https://img.shields.io/github/license/Lewa-Reka/esphome-opendtu-meter-bridge?style=for-the-badge)
+![GitHub commit activity](https://img.shields.io/github/commit-activity/y/Lewa-Reka/esphome-opendtu-meter-bridge?style=for-the-badge)
 
 ESPHome external component that reads Hoymiles microinverter data from [OpenDTU](https://github.com/tbnobody/OpenDTU) and presents instantaneous measurements to a hybrid inverter using a Modbus RTU **Eastron SDM630** or **CHINT DTSU666** register profile.
 
@@ -287,7 +287,7 @@ The reference file pulls the component from GitHub:
 
 ```yaml
 external_components:
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  - source: github://Lewa-Reka/esphome-opendtu-meter-bridge@main
     components: [opendtu_meter_bridge]
 ```
 
@@ -295,12 +295,12 @@ It also includes WiFi, OTA, API, UART (TX=17, RX=16, 9600 baud), Modbus server, 
 
 ## Migration from `opendtu_sdm630`
 
-Version 0.2.0 introduces the recommended meter-neutral `opendtu_meter_bridge` name. Existing v0.0.1-style configurations remain compatible through the `opendtu_sdm630` wrapper: they compile without changing the component list or YAML domain, emit a deprecation warning, and select SDM630 by default.
+Version 0.1.0 introduces the recommended meter-neutral `opendtu_meter_bridge` name. Existing v0.0.1-style configurations remain compatible through the `opendtu_sdm630` wrapper: they compile without changing the component list or YAML domain, emit a deprecation warning, and select SDM630 by default.
 
 ```yaml
-# Compatible v0.0.1-style configuration on the 0.2.x codebase
+# Compatible v0.0.1-style configuration on the 0.1.x codebase
 external_components:
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  - source: github://Lewa-Reka/esphome-opendtu-meter-bridge@main
     components: [opendtu_sdm630]
 
 opendtu_sdm630:
@@ -313,11 +313,11 @@ opendtu_sdm630:
   # No selector is needed: the compatibility wrapper defaults to SDM630.
 ```
 
-The recommended 0.2.x configuration uses the neutral component name and an explicit profile when needed:
+The recommended 0.1.x configuration uses the neutral component name and an explicit profile when needed:
 
 ```yaml
 external_components:
-  - source: github://Lewa-Reka/esphome-opendtu-to-sdm630@main
+  - source: github://Lewa-Reka/esphome-opendtu-meter-bridge@main
     components: [opendtu_meter_bridge]
 
 opendtu_meter_bridge:
@@ -338,8 +338,8 @@ Compatibility policy: both deprecated aliases -- the `opendtu_sdm630` component/
 ## Versioning and release guidance
 
 - The `main` branch contains the current development line and can move as fixes are added.
-- Until a reviewed upstream release is published, use `@main` for evaluation or pin a reviewed commit SHA for a reproducible build.
-- After a release is published, production installations should pin its tag rather than follow `@main`.
+- Use `@main` for evaluation or pin a reviewed commit SHA for a reproducible development build.
+- Production installations should pin a release tag, such as `@v0.1.0`, rather than follow `@main`.
 - Compatibility changes, deprecations, and release contents are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 For local component development, point `external_components` to a local path instead:
