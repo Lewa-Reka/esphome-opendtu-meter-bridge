@@ -429,6 +429,9 @@ def _register_idf_components():
 
 
 async def to_code(config):
+    if hasattr(esp32, "include_builtin_idf_component"):
+        esp32.include_builtin_idf_component("json")
+
     if hasattr(wifi, "request_wifi_connect_state_listener"):
         wifi.request_wifi_connect_state_listener()
 
