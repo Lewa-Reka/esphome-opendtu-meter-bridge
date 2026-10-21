@@ -432,6 +432,10 @@ async def to_code(config):
     if hasattr(esp32, "include_builtin_idf_component"):
         esp32.include_builtin_idf_component("json")
 
+    # esp_websocket_client links esp-tls even for plain ws:// connections.
+    if hasattr(esp32, "request_tls"):
+        esp32.request_tls()
+
     if hasattr(wifi, "request_wifi_connect_state_listener"):
         wifi.request_wifi_connect_state_listener()
 
