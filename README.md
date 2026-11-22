@@ -35,7 +35,7 @@ Instead of mounting a physical compatible meter on the AC cabling, this bridge:
 
 - Uses **OpenDTU** for **wireless** communication with Hoymiles microinverters - no RS485 or extra meter wiring across the site
 - Aggregates **AC-coupled PV** from **many microinverters** at **different coupling points** into one emulated meter - Deye exposes only **one** Grid Tie Meter 2 interface on Meter-485, so you cannot wire a separate meter at each distant feed-in. OpenDTU radio reach plus this bridge can still combine them
-- Reads live data from OpenDTU over **WebSocket** (`/livedata`) as often as OpenDTU publishes it (up to once per second, depending on the OpenDTU poll interval)
+- Reads live data from OpenDTU over **WebSocket** (`/livedata`). Since OpenDTU v24.2.12 each message contains one microinverter; the bridge keeps the latest sample for every mapped inverter and sums those samples
 - Maps each microinverter to the correct grid phase (L1/L2/L3)
 - Exposes the result as an **SDM630** or **DTSU666** Modbus slave on the Deye Meter-485 port
 
@@ -70,6 +70,7 @@ Each microinverter (**MI**) only needs radio reach to **OpenDTU**. The bridge su
 
 - Parses all electrical fields supplied by the OpenDTU AC channel (`inverters[].AC["0"]` → voltage, current, active power, reactive power, power factor and frequency)
 - Reads production, temperature and efficiency from each mapped inverter's `inverters[].INV["0"]` channel; the bridge does not use OpenDTU's global total, which can include unmapped inverters
+- Keeps the last livedata sample for each `microinverter_map` entry. OpenDTU v24.2.12 and newer send one inverter per WebSocket frame; older firmware may still send all of them together. Either way the phase sum is built from the stored samples, not from a single JSON
 - Maps microinverters to grid phases via `microinverter_map` (several inverters can share a phase; current, active power, reactive power and apparent power are summed, voltage and frequency are averaged)
 - Inverts the OpenDTU generation sign for directional values: active power is negative for export in both profiles, SDM630 retains directional current for compatibility, and DTSU666 exposes positive RMS current as required by its register map
 - Serves the selected meter register window on `slave_address` (`0x02` for Deye Grid Tie Meter 2), silently ignoring Deye queries to `0x01` (main meter address)
@@ -154,7 +155,8 @@ All options under `opendtu_meter_bridge:`:
 | `username` | no | `admin` | WebSocket authentication username |
 | `meter_profile` | no | `sdm630` | Register profile: `sdm630` (Eastron SDM630) or `dtsu666` (CHINT DTSU666) |
 | `slave_address` | no | `0x02` | Modbus slave address of the emulated meter |
-| `data_timeout` | no | `15s` | Stale-data threshold before fallback values are used |
+| `data_timeout` | no | `15s` | Silence of the whole livedata stream before fallback values are used |
+| `inverter_timeout` | no | `60s` | Silence of one mapped inverter before its instantaneous power counts as zero |
 | `default_voltage` | no | `230.0` | Fallback voltage per phase [V] |
 | `default_frequency` | no | `50.0` | Fallback grid frequency [Hz] |
 | `publish_sensors` | no | `true` | Publish ESPHome entities for monitoring |
@@ -180,6 +182,7 @@ opendtu_meter_bridge:
   # Change here: sdm630 = Eastron SDM630, dtsu666 = CHINT DTSU666.
   meter_profile: dtsu666
   slave_address: 0x02
+  inverter_timeout: 60s
   microinverter_map:
     - name: "Garage-HMS-2000-4T"
       grid_phase: 1
@@ -195,7 +198,7 @@ When `publish_sensors: true` (default), the component registers:
 - L1/L2/L3 and total reactive-power sensors (`ReactivePower` from OpenDTU)
 - L1/L2/L3 and total apparent-power sensors (derived from OpenDTU active power and power factor)
 - L1/L2/L3 and total power-factor sensors (aggregated from active and apparent power)
-- Total production today [Wh] and total lifetime production [kWh], summed across mapped microinverters
+- Total production today [Wh] and total lifetime production [kWh], summed across mapped microinverters. An inverter that stops sending frames keeps its last yield in this sum until the whole stream goes stale
 - Average mapped-inverter temperature and aggregate inverter efficiency
 - Total active-power and frequency sensors
 - **WebSocket Status** and **WebSocket Data Valid** (diagnostic binary sensors)
@@ -207,7 +210,9 @@ Individual sensor names and options can be overridden inside the `opendtu_meter_
 
 ### Failsafe behaviour
 
-When the WebSocket disconnects, JSON parsing fails, or no fresh data arrives within `data_timeout`, the bridge reports **zero coupled PV** - active power and current on all phases are set to `0.0`. Voltage falls back to `default_voltage` and frequency to `default_frequency`. Phases without a mapped microinverter always report `0.0` for power and current.
+When the WebSocket disconnects, or no livedata frame with an `inverters` array arrives within `data_timeout`, the bridge reports **zero coupled PV** - active power and current on all phases are set to `0.0`. Voltage falls back to `default_voltage` and frequency to `default_frequency`. Phases without a mapped microinverter always report `0.0` for power and current.
+
+OpenDTU also sends `{"type":"ping"}` keepalives. Ping frames, other frames without `inverters`, and JSON that fails to parse do not clear the meter. A mapped inverter that sends no frame of its own for `inverter_timeout` (default 60 s) drops out of the power, current, reactive-power, voltage and frequency calculation and contributes zero instantaneous power. Its last daily and lifetime yield stays in the production sum while the stream itself is still alive. When the whole stream goes stale, those cached yields are dropped and return only with a new frame from that inverter. `data_age` and `reachable` are not interpreted: as long as that serial or name keeps arriving, the values in the frame are used as OpenDTU sent them.
 
 ### Modbus registers
 

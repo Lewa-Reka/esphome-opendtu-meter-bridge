@@ -67,6 +67,7 @@ CONF_HOST = "host"
 CONF_PATH = "path"
 CONF_USERNAME = "username"
 CONF_DATA_TIMEOUT = "data_timeout"
+CONF_INVERTER_TIMEOUT = "inverter_timeout"
 CONF_DEFAULT_VOLTAGE = "default_voltage"
 CONF_DEFAULT_FREQUENCY = "default_frequency"
 CONF_MICROINVERTER_MAP = "microinverter_map"
@@ -363,6 +364,7 @@ CONFIG_SCHEMA = cv.All(
                 METER_PROFILES, lower=True
             ),
             cv.Optional(CONF_DATA_TIMEOUT, default="15s"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_INVERTER_TIMEOUT, default="60s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_DEFAULT_VOLTAGE, default=230.0): cv.float_,
             cv.Optional(CONF_DEFAULT_FREQUENCY, default=50.0): cv.float_,
             cv.Required(CONF_MICROINVERTER_MAP): cv.ensure_list(MICROINVERTER_MAP_SCHEMA),
@@ -451,6 +453,7 @@ async def to_code(config):
     cg.add(var.set_username(config[CONF_USERNAME]))
     cg.add(var.set_password(config[CONF_PASSWORD]))
     cg.add(var.set_data_timeout_ms(config[CONF_DATA_TIMEOUT]))
+    cg.add(var.set_inverter_timeout_ms(config[CONF_INVERTER_TIMEOUT]))
     cg.add(var.set_default_voltage(config[CONF_DEFAULT_VOLTAGE]))
     cg.add(var.set_default_frequency(config[CONF_DEFAULT_FREQUENCY]))
     cg.add(var.set_meter_profile(config[CONF_METER_PROFILE]))

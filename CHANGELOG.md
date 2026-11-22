@@ -2,7 +2,22 @@
 
 All notable changes to this project are documented here.
 
-## Unreleased
+## v0.2.0 - 2026-11-22
+
+### Added
+
+- `inverter_timeout` (default 60s). A mapped microinverter that stops appearing in its own livedata frame for this long contributes 0 W, 0 A and 0 var. Its last daily and lifetime yield stays in the production sum.
+
+### Fixed
+
+- A livedata frame for one inverter no longer zeroes the other mapped inverters.
+- WebSocket `{"type":"ping"}` frames and JSON parse errors no longer force fallback Modbus values.
+- Consecutive livedata frames stay queued. Collapsing them into the newest payload dropped updates for the other inverter.
+
+### Changed
+
+- Assemble OpenDTU livedata locally. Since OpenDTU v24.2.12 each WebSocket frame contains one inverter. The bridge keeps the last sample per mapped serial or name and sums those samples. A frame that still contains every inverter is handled the same way.
+- `data_age` and `reachable` are not interpreted. An inverter stays in the instantaneous sum for as long as OpenDTU keeps sending its frame.
 
 ## v0.1.0 - 2026-09-07
 

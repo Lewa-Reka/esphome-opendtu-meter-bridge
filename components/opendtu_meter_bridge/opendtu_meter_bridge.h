@@ -43,6 +43,33 @@ struct MicroinverterMapEntry {
   uint8_t grid_phase;
 };
 
+struct InverterSample {
+  bool seen{false};
+  bool contributing{false};
+  bool timed_out{false};
+  bool has_ac{false};
+  int64_t last_frame_us{0};
+  float voltage{0.0f};
+  float current{0.0f};
+  float power{0.0f};
+  float reactive_power{0.0f};
+  float apparent_power{0.0f};
+  float frequency{0.0f};
+  bool has_voltage{false};
+  bool has_frequency{false};
+  bool has_power{false};
+  float yield_day{0.0f};
+  float yield_total{0.0f};
+  float temperature{0.0f};
+  float dc_power{0.0f};
+  float efficiency{0.0f};
+  bool has_yield_day{false};
+  bool has_yield_total{false};
+  bool has_temperature{false};
+  bool has_dc_power{false};
+  bool has_efficiency{false};
+};
+
 struct PhaseData {
   float voltage{0.0f};
   float current{0.0f};
@@ -62,6 +89,8 @@ enum class WebSocketEventType : uint8_t {
 struct PendingWebSocketEvent {
   WebSocketEventType type;
   std::string payload;
+  int64_t received_us{0};
+  std::string inverter_serial;
 };
 
 class OpenDtuMeterBridge;
@@ -107,6 +136,7 @@ class OpenDtuMeterBridge : public Component
   void set_username(const std::string &username) { this->username_ = username; }
   void set_password(const std::string &password) { this->password_ = password; }
   void set_data_timeout_ms(uint32_t ms) { this->data_timeout_ms_ = ms; }
+  void set_inverter_timeout_ms(uint32_t ms) { this->inverter_timeout_ms_ = ms; }
   void set_default_voltage(float value) { this->default_voltage_ = value; }
   void set_default_frequency(float value) { this->default_frequency_ = value; }
   void set_meter_profile(MeterProfile profile) { this->meter_profile_ = profile; }
@@ -201,10 +231,17 @@ class OpenDtuMeterBridge : public Component
   void sync_modbus_registers_();
   void sync_modbus_registers_locked_();
   void write_modbus_defaults_();
-  void process_livedata_(const char *json, size_t len);
+  void process_livedata_(const char *json, size_t len, int64_t received_us);
   void publish_state_();
+  void log_meter_snapshot_();
   bool json_field_v_(const cJSON *object, const char *key, float &value);
   int find_inverter_index_(const cJSON *inverters, const MicroinverterMapEntry &entry);
+  void ensure_inverter_samples_();
+  bool inverter_frame_is_fresh_(const InverterSample &sample, int64_t now_us) const;
+  void update_inverter_sample_(InverterSample &sample, const cJSON *inv, int64_t now_us);
+  void log_inverter_freshness_(size_t index, bool resumed);
+  bool apply_cached_inverter_state_(int64_t now_us, bool mark_stream_fresh);
+  bool cached_inverter_expired_(int64_t now_us) const;
 
   bool ws_buf_ensure_(size_t needed);
   void queue_websocket_event_(WebSocketEventType type, std::string payload = {});
@@ -219,12 +256,14 @@ class OpenDtuMeterBridge : public Component
   std::string password_;
   uint16_t port_{80};
   uint32_t data_timeout_ms_{15000};
+  uint32_t inverter_timeout_ms_{60000};
   float default_voltage_{230.0f};
   float default_frequency_{50.0f};
   MeterProfile meter_profile_{MeterProfile::SDM630};
   std::string component_version_;
 
   std::vector<MicroinverterMapEntry> microinverter_map_;
+  std::vector<InverterSample> inverter_samples_;
   PhaseData phase_[4];
   float total_yield_day_{0.0f};
   float total_yield_total_{0.0f};
