@@ -284,21 +284,109 @@ int OpenDtuMeterBridge::find_inverter_index_(const cJSON *inverters, const Micro
   return -1;
 }
 
-void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
-  cJSON *root = cJSON_ParseWithLength(json, len);
-  if (root == nullptr) {
-    ESP_LOGW(TAG, "Failed to parse livedata JSON (length=%u bytes)", (unsigned) len);
-    this->mark_data_stale_and_reset_();
+void OpenDtuMeterBridge::ensure_inverter_samples_() {
+  if (this->inverter_samples_.size() != this->microinverter_map_.size()) {
+    this->inverter_samples_.resize(this->microinverter_map_.size());
+  }
+}
+
+bool OpenDtuMeterBridge::inverter_frame_is_fresh_(const InverterSample &sample, int64_t now_us) const {
+  if (!sample.seen || sample.last_frame_us <= 0) {
+    return false;
+  }
+  if (now_us < sample.last_frame_us) {
+    return true;
+  }
+  return (now_us - sample.last_frame_us) <= (int64_t) this->inverter_timeout_ms_ * 1000;
+}
+
+void OpenDtuMeterBridge::update_inverter_sample_(InverterSample &sample, const cJSON *inv, int64_t now_us) {
+  sample.seen = true;
+  sample.last_frame_us = now_us;
+
+  cJSON *ac = cJSON_GetObjectItemCaseSensitive(inv, "AC");
+  cJSON *ac0 = (ac != nullptr) ? cJSON_GetObjectItemCaseSensitive(ac, "0") : nullptr;
+  if (ac0 != nullptr) {
+    float voltage = 0.0f;
+    float current = 0.0f;
+    float power = 0.0f;
+    float reactive_power = 0.0f;
+    float power_factor = 0.0f;
+    float frequency = 0.0f;
+    this->json_field_v_(ac0, "Voltage", voltage);
+    this->json_field_v_(ac0, "Current", current);
+    sample.has_power = this->json_field_v_(ac0, "Power", power);
+    this->json_field_v_(ac0, "ReactivePower", reactive_power);
+    this->json_field_v_(ac0, "PowerFactor", power_factor);
+    this->json_field_v_(ac0, "Frequency", frequency);
+
+    sample.has_voltage = float_is_finite(voltage) && voltage >= VOLTAGE_MIN_V && voltage <= VOLTAGE_MAX_V;
+    sample.voltage = sample.has_voltage ? voltage : 0.0f;
+    sample.current = float_is_finite(current) ? current : 0.0f;
+    sample.power = float_is_finite(power) ? power : 0.0f;
+    sample.reactive_power = float_is_finite(reactive_power) ? reactive_power : 0.0f;
+    sample.has_frequency = float_is_finite(frequency) && frequency >= FREQUENCY_MIN_HZ && frequency <= FREQUENCY_MAX_HZ;
+    sample.frequency = sample.has_frequency ? frequency : 0.0f;
+    const float apparent_power = std::fabs(power_factor) > 0.0001f && std::fabs(power_factor) <= 1.0f
+                                     ? std::fabs(sample.power / power_factor)
+                                     : std::hypot(sample.power, sample.reactive_power);
+    sample.apparent_power = float_is_finite(apparent_power) ? apparent_power : 0.0f;
+    sample.has_ac = true;
+  }
+
+  cJSON *inverter = cJSON_GetObjectItemCaseSensitive(inv, "INV");
+  cJSON *inverter0 = (inverter != nullptr) ? cJSON_GetObjectItemCaseSensitive(inverter, "0") : nullptr;
+  if (inverter0 == nullptr) {
     return;
   }
 
-  cJSON *inverters = cJSON_GetObjectItemCaseSensitive(root, "inverters");
-  if (!cJSON_IsArray(inverters)) {
-    ESP_LOGW(TAG, "Missing 'inverters' array in livedata payload");
-    cJSON_Delete(root);
-    this->mark_data_stale_and_reset_();
+  float value = 0.0f;
+  if (this->json_field_v_(inverter0, "YieldDay", value)) {
+    sample.yield_day = value;
+    sample.has_yield_day = true;
+  }
+  if (this->json_field_v_(inverter0, "YieldTotal", value)) {
+    sample.yield_total = value;
+    sample.has_yield_total = true;
+  }
+  if (this->json_field_v_(inverter0, "Temperature", value)) {
+    sample.temperature = value;
+    sample.has_temperature = true;
+  }
+  if (this->json_field_v_(inverter0, "Efficiency", value)) {
+    sample.efficiency = value;
+    sample.has_efficiency = true;
+  }
+  if (this->json_field_v_(inverter0, "Power DC", value) && value > 0.0f) {
+    sample.dc_power = value;
+    sample.has_dc_power = true;
+  } else if (this->json_field_v_(inverter0, "Power DC", value)) {
+    sample.dc_power = 0.0f;
+    sample.has_dc_power = false;
+  }
+}
+
+void OpenDtuMeterBridge::log_inverter_freshness_(size_t index, bool resumed) {
+  const auto &entry = this->microinverter_map_[index];
+  if (resumed) {
+    if (!entry.inverter_serial.empty()) {
+      ESP_LOGI(TAG, "Microinverter serial '%s' livedata resumed", entry.inverter_serial.c_str());
+    } else {
+      ESP_LOGI(TAG, "Microinverter '%s' livedata resumed", entry.inverter_name.c_str());
+    }
     return;
   }
+  if (!entry.inverter_serial.empty()) {
+    ESP_LOGW(TAG, "Microinverter serial '%s' sent no livedata for %u ms, contributing 0 W", entry.inverter_serial.c_str(),
+             this->inverter_timeout_ms_);
+  } else {
+    ESP_LOGW(TAG, "Microinverter '%s' sent no livedata for %u ms, contributing 0 W", entry.inverter_name.c_str(),
+             this->inverter_timeout_ms_);
+  }
+}
+
+bool OpenDtuMeterBridge::apply_cached_inverter_state_(int64_t now_us, bool mark_stream_fresh) {
+  this->ensure_inverter_samples_();
 
   PhaseAccumulator tmp[4] = {};
   float frequency_sum = 0.0f;
@@ -313,95 +401,67 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
   uint8_t efficiency_count = 0;
   bool has_yield_day = false;
   bool has_yield_total = false;
+  bool freshness_changed = false;
 
-  for (const auto &entry : this->microinverter_map_) {
-    uint8_t grid_phase = entry.grid_phase;
-    if (grid_phase < 1 || grid_phase > 3) {
-      continue;
-    }
-
-    int idx = this->find_inverter_index_(inverters, entry);
-    if (idx < 0) {
-      if (!entry.inverter_serial.empty()) {
-        ESP_LOGW(TAG, "Microinverter serial '%s' not found in livedata", entry.inverter_serial.c_str());
-      } else {
-        ESP_LOGW(TAG, "Microinverter '%s' not found in livedata", entry.inverter_name.c_str());
+  for (size_t i = 0; i < this->microinverter_map_.size(); i++) {
+    const auto &entry = this->microinverter_map_[i];
+    InverterSample &sample = this->inverter_samples_[i];
+    const bool fresh = this->inverter_frame_is_fresh_(sample, now_us);
+    if (sample.contributing != fresh) {
+      freshness_changed = true;
+      if (sample.contributing && !fresh) {
+        sample.timed_out = true;
+        this->log_inverter_freshness_(i, false);
+      } else if (!sample.contributing && fresh && sample.timed_out) {
+        sample.timed_out = false;
+        this->log_inverter_freshness_(i, true);
       }
-      continue;
+      sample.contributing = fresh;
     }
 
-    cJSON *inv = cJSON_GetArrayItem(inverters, idx);
-    if (inv == nullptr) {
-      continue;
-    }
-
-    cJSON *ac = cJSON_GetObjectItemCaseSensitive(inv, "AC");
-    cJSON *ac0 = (ac != nullptr) ? cJSON_GetObjectItemCaseSensitive(ac, "0") : nullptr;
-    if (ac0 == nullptr) {
-      continue;
-    }
-
-    float voltage = 0.0f;
-    float current = 0.0f;
-    float power = 0.0f;
-    float reactive_power = 0.0f;
-    float power_factor = 0.0f;
-    float frequency = 0.0f;
-    this->json_field_v_(ac0, "Voltage", voltage);
-    this->json_field_v_(ac0, "Current", current);
-    const bool has_power = this->json_field_v_(ac0, "Power", power);
-    this->json_field_v_(ac0, "ReactivePower", reactive_power);
-    this->json_field_v_(ac0, "PowerFactor", power_factor);
-    this->json_field_v_(ac0, "Frequency", frequency);
-
-    if (float_is_finite(voltage) && voltage >= VOLTAGE_MIN_V && voltage <= VOLTAGE_MAX_V) {
-      tmp[grid_phase].voltage_sum += voltage;
-      tmp[grid_phase].voltage_count++;
-    }
-    tmp[grid_phase].current += -current;
-    tmp[grid_phase].power += -power;
-    tmp[grid_phase].reactive_power += -reactive_power;
-    const float apparent_power = std::fabs(power_factor) > 0.0001f && std::fabs(power_factor) <= 1.0f
-                                     ? std::fabs(power / power_factor)
-                                     : std::hypot(power, reactive_power);
-    if (float_is_finite(apparent_power)) {
-      tmp[grid_phase].apparent_power += apparent_power;
-    }
-    tmp[grid_phase].has_data = true;
-
-    if (float_is_finite(frequency) && frequency >= FREQUENCY_MIN_HZ && frequency <= FREQUENCY_MAX_HZ) {
-      frequency_sum += frequency;
-      frequency_count++;
-    }
-
-    cJSON *inverter = cJSON_GetObjectItemCaseSensitive(inv, "INV");
-    cJSON *inverter0 = (inverter != nullptr) ? cJSON_GetObjectItemCaseSensitive(inverter, "0") : nullptr;
-    if (inverter0 == nullptr) {
-      continue;
-    }
-
-    float value = 0.0f;
-    if (this->json_field_v_(inverter0, "YieldDay", value)) {
-      yield_day_total += value;
+    if (sample.seen && sample.has_yield_day && float_is_finite(sample.yield_day)) {
+      yield_day_total += sample.yield_day;
       has_yield_day = true;
     }
-    if (this->json_field_v_(inverter0, "YieldTotal", value)) {
-      yield_total_total += value;
+    if (sample.seen && sample.has_yield_total && float_is_finite(sample.yield_total)) {
+      yield_total_total += sample.yield_total;
       has_yield_total = true;
     }
-    if (this->json_field_v_(inverter0, "Temperature", value)) {
-      temperature_sum += value;
+    if (!fresh) {
+      continue;
+    }
+
+    const uint8_t grid_phase = entry.grid_phase;
+    if (sample.has_ac && grid_phase >= 1 && grid_phase <= 3) {
+      if (sample.has_voltage) {
+        tmp[grid_phase].voltage_sum += sample.voltage;
+        tmp[grid_phase].voltage_count++;
+      }
+      tmp[grid_phase].current += -sample.current;
+      tmp[grid_phase].power += -sample.power;
+      tmp[grid_phase].reactive_power += -sample.reactive_power;
+      if (float_is_finite(sample.apparent_power)) {
+        tmp[grid_phase].apparent_power += sample.apparent_power;
+      }
+      tmp[grid_phase].has_data = true;
+      if (sample.has_frequency) {
+        frequency_sum += sample.frequency;
+        frequency_count++;
+      }
+      if (sample.has_power) {
+        ac_power_total += std::fabs(sample.power);
+      }
+    }
+    if (sample.has_temperature && float_is_finite(sample.temperature)) {
+      temperature_sum += sample.temperature;
       temperature_count++;
     }
-    if (this->json_field_v_(inverter0, "Efficiency", value)) {
-      efficiency_sum += value;
+    if (sample.has_efficiency && float_is_finite(sample.efficiency)) {
+      efficiency_sum += sample.efficiency;
       efficiency_count++;
     }
-    if (has_power) {
-      ac_power_total += std::fabs(power);
-    }
-    if (this->json_field_v_(inverter0, "Power DC", value) && value > 0.0f) {
-      dc_power_total += value;
+    if (sample.has_dc_power && sample.dc_power > 0.0f && float_is_finite(sample.dc_power)) {
+      dc_power_total += sample.dc_power;
     }
   }
 
@@ -443,32 +503,65 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
   this->has_yield_day_data_ = has_yield_day && float_is_finite(this->total_yield_day_);
   this->has_yield_total_data_ = has_yield_total && float_is_finite(this->total_yield_total_);
   this->has_temperature_data_ = temperature_count > 0 && float_is_finite(this->average_temperature_);
-  this->last_data_us_ = esp_timer_get_time();
-  this->data_stale_ = false;
+  if (mark_stream_fresh) {
+    this->last_data_us_ = now_us;
+    this->data_stale_ = false;
+  }
   this->sync_modbus_registers_locked_();
   xSemaphoreGive(this->data_mutex_);
+  return freshness_changed;
+}
 
+bool OpenDtuMeterBridge::cached_inverter_expired_(int64_t now_us) const {
+  for (const auto &sample : this->inverter_samples_) {
+    if (sample.contributing && !this->inverter_frame_is_fresh_(sample, now_us)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void OpenDtuMeterBridge::log_meter_snapshot_() {
+  ESP_LOGI(TAG, "L1: %.1f V, %.2f A, %.1f W", this->get_voltage(1), this->get_current(1), this->get_power(1));
+  ESP_LOGI(TAG, "L2: %.1f V, %.2f A, %.1f W", this->get_voltage(2), this->get_current(2), this->get_power(2));
+  ESP_LOGI(TAG, "L3: %.1f V, %.2f A, %.1f W", this->get_voltage(3), this->get_current(3), this->get_power(3));
+  ESP_LOGI(TAG, "Total Power: %.1f W", this->get_total_power());
+  ESP_LOGI(TAG, "Total Reactive Power: %.1f var", this->get_total_reactive_power());
+  ESP_LOGI(TAG, "Frequency: %.2f Hz", this->get_frequency());
+}
+
+void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
+  cJSON *root = cJSON_ParseWithLength(json, len);
+  if (root == nullptr) {
+    ESP_LOGW(TAG, "Failed to parse livedata JSON (length=%u bytes)", (unsigned) len);
+    return;
+  }
+
+  cJSON *inverters = cJSON_GetObjectItemCaseSensitive(root, "inverters");
+  if (!cJSON_IsArray(inverters)) {
+    cJSON_Delete(root);
+    ESP_LOGD(TAG, "Ignoring livedata frame without inverters");
+    return;
+  }
+
+  const int64_t now_us = esp_timer_get_time();
+  this->ensure_inverter_samples_();
+  const int count = cJSON_GetArraySize(inverters);
+  for (size_t i = 0; i < this->microinverter_map_.size(); i++) {
+    const int idx = this->find_inverter_index_(inverters, this->microinverter_map_[i]);
+    if (idx < 0 || idx >= count) {
+      continue;
+    }
+    cJSON *inv = cJSON_GetArrayItem(inverters, idx);
+    if (inv == nullptr) {
+      continue;
+    }
+    this->update_inverter_sample_(this->inverter_samples_[i], inv, now_us);
+  }
   cJSON_Delete(root);
 
-  float v1 = this->get_voltage(1);
-  float c1 = this->get_current(1);
-  float p1 = this->get_power(1);
-  float v2 = this->get_voltage(2);
-  float c2 = this->get_current(2);
-  float p2 = this->get_power(2);
-  float v3 = this->get_voltage(3);
-  float c3 = this->get_current(3);
-  float p3 = this->get_power(3);
-  float total = this->get_total_power();
-  float total_reactive = this->get_total_reactive_power();
-
-  ESP_LOGI(TAG, "L1: %.1f V, %.2f A, %.1f W", v1, c1, p1);
-  ESP_LOGI(TAG, "L2: %.1f V, %.2f A, %.1f W", v2, c2, p2);
-  ESP_LOGI(TAG, "L3: %.1f V, %.2f A, %.1f W", v3, c3, p3);
-  ESP_LOGI(TAG, "Total Power: %.1f W", total);
-  ESP_LOGI(TAG, "Total Reactive Power: %.1f var", total_reactive);
-  ESP_LOGI(TAG, "Frequency: %.2f Hz", this->get_frequency());
-
+  this->apply_cached_inverter_state_(now_us, true);
+  this->log_meter_snapshot_();
   this->publish_state_();
 }
 
@@ -496,15 +589,8 @@ void OpenDtuMeterBridge::queue_websocket_event_(WebSocketEventType type, std::st
   }
   xSemaphoreTake(this->websocket_event_mutex_, portMAX_DELAY);
 
-  // Livedata frames can arrive faster than ESPHome's main loop during a long
-  // blocking operation. Only the newest consecutive frame is useful.
-  if (type == WebSocketEventType::DATA && !this->pending_websocket_events_.empty() &&
-      this->pending_websocket_events_.back().type == WebSocketEventType::DATA) {
-    this->pending_websocket_events_.back().payload = std::move(payload);
-    xSemaphoreGive(this->websocket_event_mutex_);
-    return;
-  }
-
+  // Each livedata frame carries one inverter. Consecutive frames have to stay
+  // queued so a later serial does not replace the previous one.
   if (this->pending_websocket_events_.size() >= MAX_PENDING_WEBSOCKET_EVENTS) {
     auto drop = this->pending_websocket_events_.begin();
     for (auto event = this->pending_websocket_events_.begin(); event != this->pending_websocket_events_.end();
@@ -944,6 +1030,7 @@ void OpenDtuMeterBridge::setup() {
     this->mark_failed();
     return;
   }
+  this->ensure_inverter_samples_();
   this->sync_modbus_registers_();
   if (this->modbus_parent_ != nullptr && this->modbus_slave_address_ != 0) {
     this->modbus_server_device_.set_bridge(this);
@@ -1001,10 +1088,15 @@ void OpenDtuMeterBridge::loop() {
   xSemaphoreGive(this->data_mutex_);
 
   if (!data_stale) {
-    int64_t age = esp_timer_get_time() - last_data_us;
+    const int64_t now_us = esp_timer_get_time();
+    int64_t age = now_us - last_data_us;
     if (age > (int64_t) this->data_timeout_ms_ * 1000) {
       ESP_LOGW(TAG, "No livedata from OpenDTU for %lld ms, using fallback Modbus values", (long long) (age / 1000));
       this->mark_data_stale_and_reset_();
+    } else if (this->cached_inverter_expired_(now_us)) {
+      this->apply_cached_inverter_state_(now_us, false);
+      this->log_meter_snapshot_();
+      this->publish_state_();
     }
   }
 }
@@ -1017,6 +1109,7 @@ void OpenDtuMeterBridge::dump_config() {
   ESP_LOGCONFIG(TAG, "  Meter profile  : %s", meter_profile_name(this->meter_profile_));
   ESP_LOGCONFIG(TAG, "  Modbus address : 0x%02X", this->modbus_slave_address_);
   ESP_LOGCONFIG(TAG, "  Data timeout   : %u ms", this->data_timeout_ms_);
+  ESP_LOGCONFIG(TAG, "  Inverter timeout: %u ms", this->inverter_timeout_ms_);
   ESP_LOGCONFIG(TAG, "  Fallback V/f   : %.1f V / %.1f Hz", this->default_voltage_, this->default_frequency_);
   ESP_LOGCONFIG(TAG, "  Microinverters : %u mapped", (unsigned) this->microinverter_map_.size());
   for (size_t i = 0; i < this->microinverter_map_.size(); i++) {

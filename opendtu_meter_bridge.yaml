@@ -11,6 +11,7 @@ opendtu_meter_bridge:
   # Select the emulated meter: sdm630 (Eastron SDM630) or dtsu666 (CHINT DTSU666).
   meter_profile: sdm630
   slave_address: 0x02
+  inverter_timeout: 60s
   microinverter_map:
     - name: "Garage-HMS-2000-4T"
       grid_phase: 3
