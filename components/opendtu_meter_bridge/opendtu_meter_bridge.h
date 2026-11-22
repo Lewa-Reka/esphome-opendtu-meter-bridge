@@ -89,6 +89,8 @@ enum class WebSocketEventType : uint8_t {
 struct PendingWebSocketEvent {
   WebSocketEventType type;
   std::string payload;
+  int64_t received_us{0};
+  std::string inverter_serial;
 };
 
 class OpenDtuMeterBridge;
@@ -229,7 +231,7 @@ class OpenDtuMeterBridge : public Component
   void sync_modbus_registers_();
   void sync_modbus_registers_locked_();
   void write_modbus_defaults_();
-  void process_livedata_(const char *json, size_t len);
+  void process_livedata_(const char *json, size_t len, int64_t received_us);
   void publish_state_();
   void log_meter_snapshot_();
   bool json_field_v_(const cJSON *object, const char *key, float &value);

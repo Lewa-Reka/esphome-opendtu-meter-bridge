@@ -21,6 +21,8 @@ static const char *const TAG = "opendtu_meter_bridge";
 static constexpr uint8_t DEYE_MAIN_METER_ADDRESS = 0x01;
 static constexpr uint16_t MAX_MODBUS_READ_REGISTERS = 125;
 static constexpr size_t MAX_PENDING_WEBSOCKET_EVENTS = 8;
+// One OpenDTU inverter frame is about 2 KB. Eight queued frames stay under 128 KB.
+static constexpr size_t MAX_WEBSOCKET_PAYLOAD = 16 * 1024;
 
 static constexpr float VOLTAGE_MIN_V = 100.0f;
 static constexpr float VOLTAGE_MAX_V = 300.0f;
@@ -132,6 +134,14 @@ bool OpenDtuMeterBridge::read_modbus_registers(uint16_t start_address, uint16_t 
 }
 
 void OpenDtuMeterBridge::mark_data_stale_and_reset_() {
+  // A full stream outage must not restore production totals from memory when
+  // only one inverter speaks again. Per-inverter silence keeps the last yield.
+  for (auto &sample : this->inverter_samples_) {
+    sample.yield_day = 0.0f;
+    sample.yield_total = 0.0f;
+    sample.has_yield_day = false;
+    sample.has_yield_total = false;
+  }
   xSemaphoreTake(this->data_mutex_, portMAX_DELAY);
   this->data_stale_ = true;
   for (auto &phase : this->phase_) {
@@ -530,7 +540,7 @@ void OpenDtuMeterBridge::log_meter_snapshot_() {
   ESP_LOGI(TAG, "Frequency: %.2f Hz", this->get_frequency());
 }
 
-void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
+void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len, int64_t received_us) {
   cJSON *root = cJSON_ParseWithLength(json, len);
   if (root == nullptr) {
     ESP_LOGW(TAG, "Failed to parse livedata JSON (length=%u bytes)", (unsigned) len);
@@ -544,7 +554,7 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
     return;
   }
 
-  const int64_t now_us = esp_timer_get_time();
+  const int64_t frame_us = received_us > 0 ? received_us : esp_timer_get_time();
   this->ensure_inverter_samples_();
   const int count = cJSON_GetArraySize(inverters);
   for (size_t i = 0; i < this->microinverter_map_.size(); i++) {
@@ -556,22 +566,42 @@ void OpenDtuMeterBridge::process_livedata_(const char *json, size_t len) {
     if (inv == nullptr) {
       continue;
     }
-    this->update_inverter_sample_(this->inverter_samples_[i], inv, now_us);
+    this->update_inverter_sample_(this->inverter_samples_[i], inv, frame_us);
   }
   cJSON_Delete(root);
 
-  this->apply_cached_inverter_state_(now_us, true);
+  this->apply_cached_inverter_state_(frame_us, true);
   this->log_meter_snapshot_();
   this->publish_state_();
 }
 
+std::string livedata_serial_(const std::string &payload) {
+  const std::string key = "\"serial\":\"";
+  const size_t pos = payload.find(key);
+  if (pos == std::string::npos) {
+    return {};
+  }
+  const size_t start = pos + key.size();
+  const size_t end = payload.find('"', start);
+  if (end == std::string::npos || end == start) {
+    return {};
+  }
+  return payload.substr(start, end - start);
+}
+
 bool OpenDtuMeterBridge::ws_buf_ensure_(size_t needed) {
+  if (needed > MAX_WEBSOCKET_PAYLOAD + 1) {
+    return false;
+  }
   if (needed <= this->ws_cap_) {
     return true;
   }
   size_t new_cap = (this->ws_cap_ == 0) ? 4096 : this->ws_cap_;
   while (new_cap < needed) {
     new_cap *= 2;
+  }
+  if (new_cap > MAX_WEBSOCKET_PAYLOAD + 1) {
+    new_cap = needed;
   }
   char *p = (char *) realloc(this->ws_buf_, new_cap);
   if (p == nullptr) {
@@ -587,10 +617,27 @@ void OpenDtuMeterBridge::queue_websocket_event_(WebSocketEventType type, std::st
   if (this->websocket_event_mutex_ == nullptr) {
     return;
   }
+  const int64_t received_us = esp_timer_get_time();
+  std::string inverter_serial;
+  if (type == WebSocketEventType::DATA) {
+    inverter_serial = livedata_serial_(payload);
+  }
+
   xSemaphoreTake(this->websocket_event_mutex_, portMAX_DELAY);
 
-  // Each livedata frame carries one inverter. Consecutive frames have to stay
-  // queued so a later serial does not replace the previous one.
+  // A newer frame for the same serial replaces the one still waiting. Frames
+  // for other inverters stay queued.
+  if (!inverter_serial.empty()) {
+    for (auto &event : this->pending_websocket_events_) {
+      if (event.type == WebSocketEventType::DATA && event.inverter_serial == inverter_serial) {
+        event.payload = std::move(payload);
+        event.received_us = received_us;
+        xSemaphoreGive(this->websocket_event_mutex_);
+        return;
+      }
+    }
+  }
+
   if (this->pending_websocket_events_.size() >= MAX_PENDING_WEBSOCKET_EVENTS) {
     auto drop = this->pending_websocket_events_.begin();
     for (auto event = this->pending_websocket_events_.begin(); event != this->pending_websocket_events_.end();
@@ -603,7 +650,7 @@ void OpenDtuMeterBridge::queue_websocket_event_(WebSocketEventType type, std::st
     this->pending_websocket_events_.erase(drop);
   }
 
-  this->pending_websocket_events_.push_back({type, std::move(payload)});
+  this->pending_websocket_events_.push_back({type, std::move(payload), received_us, std::move(inverter_serial)});
   xSemaphoreGive(this->websocket_event_mutex_);
 }
 
@@ -641,7 +688,7 @@ void OpenDtuMeterBridge::process_pending_websocket_events_() {
         this->mark_data_stale_and_reset_();
         break;
       case WebSocketEventType::DATA:
-        this->process_livedata_(event.payload.data(), event.payload.size());
+        this->process_livedata_(event.payload.data(), event.payload.size(), event.received_us);
         break;
     }
   }
@@ -677,6 +724,10 @@ void OpenDtuMeterBridge::websocket_event_handler_(void *handler_args, esp_event_
         const size_t payload_len = (size_t) data->payload_len;
         const size_t payload_offset = (size_t) data->payload_offset;
         const size_t data_len = (size_t) data->data_len;
+        if (payload_len > MAX_WEBSOCKET_PAYLOAD) {
+          ESP_LOGW(TAG, "Ignoring oversized WebSocket frame (%u bytes)", (unsigned) payload_len);
+          break;
+        }
         if (payload_offset > payload_len || data_len > payload_len - payload_offset ||
             (data_len > 0 && data->data_ptr == nullptr)) {
           ESP_LOGW(TAG, "Ignoring invalid WebSocket fragment");
